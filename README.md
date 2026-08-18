@@ -128,3 +128,7 @@ precision (noiseless) and degrades gracefully under added noise.
 See `common/README.md` for the full checklist (Kinesis/IDS Peak SDK
 install, `pip install`, motor serials/zero-offsets, and the recommended
 dry-run-first order of operations).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
