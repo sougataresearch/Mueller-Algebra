@@ -129,3 +129,49 @@
   project owner's stated preference when asked directly. No patent-grant
   concern was raised that would favor Apache 2.0, and no copyleft
   requirement was stated that would favor GPL-3.0.
+
+## ADR-011: Calibration cross-check CLI, and a scalar-vs-per-pixel discipline for mechanical parameters
+
+- **Decision**: `continuous_single_arm_calibration.py`/
+  `continuous_dual_arm_calibration.py` (Section IV/V's built-in
+  calibration cross-check) gained `load_and_run_*_calibration(run_dir)` +
+  an `argparse` CLI, reusing the reconstruction modules' own loaders
+  (`load_continuous_single_arm_run`/`load_dual_arm_run`). Section IV's
+  phase-reference revolution is read from the session's own outer=0 step
+  (`find_zero_outer_step()`) rather than requiring a second, dedicated
+  capture — justified because Eq. 57/58's reference configuration (fixed-
+  side + outer axis both at optical 0) *is* the outer=0 step, not merely
+  similar to it.
+- **A second decision, forced by testing the first**: `C1'` (Section IV)
+  and `C1, C1'` (Section V) are always reduced to a single scalar
+  (`np.nanmedian`) even when computed from genuine per-pixel `(H, W)`
+  intensities, rather than left as per-pixel maps like `s,f,r,delta_deg,T`
+  are. **Why**: these are properties of the rotating stage's own
+  mechanical/encoder zero, not spatially-varying optical quantities — and
+  they must be scalar regardless, since they shift the shared, frame-
+  indexed angle axis that `fit_revolution_fourier`'s single design matrix
+  depends on (a per-pixel phase correction would require a per-pixel
+  design matrix, defeating that function's whole vectorization scheme).
+- **Found only by testing against a real dry-run session, not the
+  pre-existing synthetic-array tests**: manually running the new CLI
+  against an actual `measure.py --dry-run` session (real `(H, W)` camera
+  frames) immediately crashed three functions that had only ever been
+  exercised with 1-D scalar-per-frame synthetic arrays:
+  `measure_phase_offset`, `measure_non_rotating_side_defects` (which had a
+  *second*, independent bug: `expected_b`'s `(4,5)` shape not broadcasting
+  against a per-pixel `e_mat`'s `(4,5,H,W)`), and `solve_phase_origins`'
+  `phi_prime`. All three were fixed and given permanent per-pixel
+  regression tests (`test_accepts_genuine_per_pixel_intensities` in both
+  sections' test files) plus a new integration test
+  (`test_load_and_run_against_real_dry_run_session`) that runs a real
+  `measure.py --dry-run --no-prompt` session (`DATA_ROOT` monkeypatched to
+  a temp directory) and feeds it through the new loader — this is what
+  actually caught the bugs, and is now a permanent regression guard
+  against the same class recurring.
+- **Consequence for `rules.md`**: this is the same underlying lesson as
+  ADR-006/ADR-007 (an assumption about input shape that only the *actual*
+  data, not a hand-written synthetic array, exposed as wrong) — added as
+  its own explicit caution rather than folded silently into the existing
+  "never trust `lstsq` on an unchecked system size" rule, since the
+  failure mode here (a premature scalar cast, not an underdetermined fit)
+  is genuinely different.

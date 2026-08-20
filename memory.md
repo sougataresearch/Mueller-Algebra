@@ -17,41 +17,55 @@ II–V are implemented and tested:
 - Section IV (`continuous_single_arm_reconstruction.py` +
   `continuous_single_arm_calibration.py`): per-revolution + outer-angle
   Fourier fit, E/B/F reconstruction, built-in calibration cross-check.
-  Working (calibration module is library-only, no CLI — see below).
+  Working, **now with its own CLI** (`--compare-to`, added 2026-08-20).
 - Section V (`continuous_dual_arm_reconstruction.py` +
   `continuous_dual_arm_calibration.py`): 25-coefficient Fourier fit + full
-  16-element inversion, built-in calibration cross-check. Working (same
-  library-only caveat).
+  16-element inversion, built-in calibration cross-check. Working, same
+  new CLI.
 
-**Verified today (2026-08-20)**: all 5 test suites actually re-run,
-97/97 tests passing, no leftover scratch artifacts. See `testing.md` for
-the per-suite breakdown.
+**Verified 2026-08-20**: all 5 test suites re-run, **101/101 tests
+passing** (up from 97 the same day, after adding the calibration CLI +
+its regression/integration tests below), no leftover scratch artifacts.
+See `testing.md` for the per-suite breakdown.
 
-**Full documentation suite added same day**: `PRD.md`, `architecture.md`,
+**Full documentation suite added 2026-08-20**: `PRD.md`, `architecture.md`,
 `design.md`, `rules.md`, `testing.md`, `troubleshooting.md`,
 `CONVENTIONS.md`, `deployment.md`, `decisions.md` (ADR-001 through
-ADR-010), this file, `progress_log.md`, and `MMIE_ATOMIC_TARGETS.md` —
+ADR-011), this file, `progress_log.md`, and `MMIE_ATOMIC_TARGETS.md` —
 mirroring the sibling `ocd_library`/`sougata_solver` projects' own
 documentation set and discipline, but reflecting a *mature*, largely-
 finished project rather than a forward-looking scaffold.
 
+**Calibration cross-check CLI built same day** (`MMIE_ATOMIC_TARGETS.md`
+Category 6, now COMPLETE): `continuous_single_arm_calibration.py`/
+`continuous_dual_arm_calibration.py` gained `load_and_run_*_calibration()`
++ an `argparse` CLI. Building it surfaced three real bugs — three
+functions forced a premature `float()` cast that only ever worked on the
+existing tests' 1-D scalar-per-frame arrays, and crashed instantly against
+genuine `(H, W)` per-pixel camera frames. Fixed by reducing each (a single
+mechanical/encoder-zero parameter, not a spatially-varying optical
+quantity) to a scalar via `nanmedian`. See `decisions.md` ADR-011.
+
 ## Things Future AI/Human Sessions Should Remember
 
-- **This is not a scaffold.** Unlike `ocd_library`, almost everything in
-  `MMIE_ATOMIC_TARGETS.md` is already checked off. Don't assume "not
-  implemented yet" without checking that file first.
-- **The two calibration cross-check modules have no CLI.**
-  `continuous_single_arm_calibration.py`/`continuous_dual_arm_calibration.py`
-  are library functions, exercised only by their own test files — don't
-  invent a `--compare-to`-style CLI usage for them without first actually
-  building it (this was caught and corrected once already while writing
-  `RECIPE.md`).
+- **This is not a scaffold.** Unlike `ocd_library`, everything in
+  `MMIE_ATOMIC_TARGETS.md` except Category 7 (real-hardware validation) is
+  already checked off. Don't assume "not implemented yet" without checking
+  that file first.
+- **Before trusting any "per-pixel vectorized" function, check it's
+  actually been run against a genuinely multi-pixel array, not just the
+  scalar/1-D case a hand-written test happened to construct.** Three real
+  crashes were found this exact way while building the calibration CLI —
+  see `decisions.md` ADR-011, `rules.md` AI Coding Rule 4. A passing test
+  suite does not by itself prove this.
 - **Nothing has been run against real hardware in this development
-  environment.** No Kinesis, no IDS Peak SDK installed here. Every "97
-  tests pass" claim is about the *math*, verified via synthetic
-  round-trip against each module's own stated forward model — not a claim
-  that the bench itself has been used. See `PRD.md`'s Risks,
-  `troubleshooting.md`'s Anticipated Gotchas.
+  environment.** No Kinesis, no IDS Peak SDK installed here. Every "tests
+  pass" claim is about the *math*, verified via synthetic round-trip
+  against each module's own stated forward model (or, for two new
+  integration tests, against a real `measure.py --dry-run` session with
+  `DATA_ROOT` monkeypatched to a temp directory) — not a claim that the
+  bench itself has been used. See `PRD.md`'s Risks, `troubleshooting.md`'s
+  Anticipated Gotchas.
 - **`common/measure.py` is never modified by a reconstruction-side
   change** — it's read-only from Sections III/IV/V's perspective
   (`decisions.md` ADR-002, `rules.md`).

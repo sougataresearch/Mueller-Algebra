@@ -87,17 +87,16 @@ python section4_single_arm_continuous\continuous_single_arm_reconstruction.py "D
     --rotating-calibration-dir "Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01"
 ```
 
-This section also has a built-in calibration cross-check
-(`continuous_single_arm_calibration.py`'s `run_single_arm_calibration()` +
-`cross_check_against_part1()`) that compares its own recovered rotating-QWP
-`s,f,r` against Step 2's numbers for the same QWP. It's a **library
-function, not a command-line script** — there's no `--dry-run`/CLI wrapper
-for it yet, so using it today means calling it from your own Python code
-(or reading `test_continuous_single_arm.py`'s
-`test_cross_check_against_part1_reports_agreement` test for the exact call
-shape: it needs the phase-reference revolution's angles/intensities plus
-each outer step's rotating-side angles/intensities, which you'd read out
-of `experiment_log.csv` and the TIFFs yourself).
+This section also has a built-in calibration cross-check that compares its
+own recovered rotating-QWP `s,f,r` against Step 2's numbers for the same
+QWP — run it against a **separate, sample-absent** session whose
+`OUTER_ANGLES_DEG` includes `0.0` (the default `[0, 45, 90]` already does):
+
+```powershell
+python common\measure.py --mode 4x3 --acquisition continuous --dry-run --no-prompt --run-label calcheck4
+python section4_single_arm_continuous\continuous_single_arm_calibration.py "Data\2026-08-18_calcheck4_01" `
+    --compare-to "Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01\Config\calibration_result.json"
+```
 
 ### 3c. Dual-arm continuous (Section V) — production path, run this one once everything else checks out
 

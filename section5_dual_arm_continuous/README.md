@@ -62,11 +62,24 @@ of Section II. Same `{s,f,r,delta_deg,T}` output schema as Section II, so
 `cross_check_against_part1()` diffs the two directly (agreement =
 confidence in both; disagreement = something to investigate).
 
+Has its own CLI now (`--compare-to`): point it at a *sample-absent*
+`measure.py` 4x4 continuous-mode session. Unlike Section IV, no separate
+phase-reference revolution needs to be located — C1/C1′ both come from
+one 25-coefficient fit of the whole session, so the run directory's own
+`(C, C')` log feeds `run_dual_arm_calibration()` directly.
+
 ## Output
 
-Same schema as Sections III/IV: `Results/mueller_matrix.npy` +
+Reconstruction (`continuous_dual_arm_reconstruction.py`): same schema as
+Sections III/IV: `Results/mueller_matrix.npy` +
 `Results/mueller_matrix_summary.json` (the latter also carries the 9
 consistency-check diagnostics).
+
+Calibration cross-check (`continuous_dual_arm_calibration.py`):
+`Results/dual_arm_calibration_cross_check.json` — the recovered `C1,C1′`,
+both QWPs' `{s,f,r,delta_deg,T}`, source response, raw-`b_j` misalignment
+check, and (with `--compare-to`) the diff against Section II's numbers for
+both QWPs.
 
 ## Running it
 
@@ -75,6 +88,11 @@ python ..\common\measure.py --mode 4x4 --acquisition continuous --dry-run --no-p
 python continuous_dual_arm_reconstruction.py "..\Data\2026-08-18_sample3_01" `
     --psg-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01" `
     --psa-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01"
+
+# Built-in calibration cross-check (separate, sample-absent session):
+python ..\common\measure.py --mode 4x4 --acquisition continuous --dry-run --no-prompt --run-label calcheck5
+python continuous_dual_arm_calibration.py "..\Data\2026-08-18_calcheck5_01" `
+    --compare-to "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01\Config\calibration_result.json"
 ```
 
 ## Testing

@@ -45,6 +45,26 @@ candidate fails regardless of offset. `suggest_angle_grid()` falls back to
 a deterministic (seeded, reproducible) search in this exact case; N≥5
 always finds an evenly-spaced grid that works. See `design.md` §4.
 
+### A "vectorized" function crashed on real per-pixel camera frames despite passing all its existing tests
+
+While building the Section IV/V calibration CLI (`MMIE_ATOMIC_TARGETS.md`
+Category 6), three functions that had only ever been unit-tested with 1-D
+scalar-per-frame synthetic arrays crashed the instant they were run
+against real `(H, W)` camera frames from an actual `measure.py --dry-run`
+session: `continuous_single_arm_calibration.measure_phase_offset`,
+`measure_non_rotating_side_defects` (a second, independent bug in the same
+function: `expected_b`'s `(4,5)` shape didn't broadcast against a
+per-pixel `e_mat`'s `(4,5,H,W)`), and
+`continuous_dual_arm_calibration.solve_phase_origins`. All three forced a
+premature `float(...)` cast on what turned out to be a genuine multi-pixel
+array. Fixed by reducing each (a single mechanical/encoder-zero parameter,
+not a spatially-varying optical quantity) to a scalar via `np.nanmedian`
+before use — see `decisions.md` ADR-011, `rules.md` AI Coding Rule 4. Now
+covered by a permanent per-pixel regression test in each section, plus a
+new integration test that runs a real `measure.py --dry-run` session
+(`DATA_ROOT` monkeypatched to a temp directory) rather than only
+synthetic in-memory arrays.
+
 ### `Data/` always lands at the project root, regardless of current directory
 
 Every acquisition/calibration script resolves its output root relative to
@@ -70,11 +90,6 @@ a bug — this is deliberate, not accidental.
   (`--resume`), an interrupted continuous revolution or outer step
   restarts from scratch — by design, not a missing feature
   (`common/README.md`).
-- **The Section IV/V calibration cross-check modules have no CLI yet.**
-  `continuous_single_arm_calibration.py`/`continuous_dual_arm_calibration.py`
-  are library functions, exercised today only by their own test files —
-  don't expect a `python continuous_single_arm_calibration.py <run_dir>`
-  invocation to exist (`RECIPE.md`, `MMIE_ATOMIC_TARGETS.md` Category 6).
 - **A missing Kinesis/IDS Peak SDK is reported, not fatal, in `--dry-run`.**
   `check_environment()`'s table will show `MISSING` lines for both in this
   (or any non-bench) development environment — that's expected and

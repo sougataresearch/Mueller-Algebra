@@ -94,15 +94,24 @@ project inherits the spirit of). Own repo, own history
    (`design.md` §4) — a genuinely new grid choice must be rank-checked
    (`check_angle_grid_rank`/`suggest_angle_grid`'s pattern), not assumed
    safe by inspection.
-4. **Never leave a mode's structurally-unrecoverable rows/columns as
+4. **Never assume a per-pixel-vectorized function actually works on
+   genuine multi-pixel input just because its existing tests pass.** A
+   hand-written synthetic test using 1-D (scalar-per-frame) arrays can
+   pass while a hidden `float(...)` cast crashes the instant real `(H, W)`
+   camera frames arrive — found three times in one afternoon while
+   building the Section IV/V calibration CLI (`decisions.md` ADR-011).
+   Before trusting a "vectorized" function against real data, run it
+   against a genuinely multi-pixel array at least once, not just the
+   scalar case its unit tests happened to construct.
+5. **Never leave a mode's structurally-unrecoverable rows/columns as
    anything other than `NaN`.** Fabricating a plausible-looking number for
    a sub-block 3×3/3×4/4×3 cannot actually see is worse than an explicit
    `NaN` — it looks like a real measurement.
-5. **Never modify `common/measure.py` from a reconstruction-side change.**
+6. **Never modify `common/measure.py` from a reconstruction-side change.**
    If a reconstruction module needs `measure.py` to write something it
    currently doesn't, that's a `common/`-scoped change, made and tested on
    its own merits, not folded silently into a Section III/IV/V PR.
-6. **Measure before optimizing.** Per-pixel vectorization is already the
+7. **Measure before optimizing.** Per-pixel vectorization is already the
    project's real performance requirement and is already met — there is
    no unmet performance need here to speculatively address (no GPU, no
    parallelism, no caching layer needed at this project's actual scale).

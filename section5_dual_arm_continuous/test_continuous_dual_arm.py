@@ -6,7 +6,9 @@ project spec). No hardware, no motors, no camera required.
 
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -195,6 +197,89 @@ class DualArmCalibrationRoundTripTests(unittest.TestCase):
         for target in ("PSG_QWP", "PSA_QWP"):
             for field in ("s", "f", "r", "delta_deg", "T"):
                 self.assertAlmostEqual(diffs[target][field]["diff"], 0.0, places=6)
+
+    def test_accepts_genuine_per_pixel_intensities(self):
+        """Regression test for the real crash found while building the
+        calibration CLI (MMIE_ATOMIC_TARGETS.md Category 6):
+        solve_phase_origins' phi_prime used to force a direct float() cast
+        that raised TypeError against genuine (n_frames, H, W) per-pixel
+        intensities -- every other test in this file only ever exercises
+        scalar-per-frame arrays, which never hit that path."""
+
+        c1_true, c1_prime_true, n_frames = 4.0, -6.5, 400
+        height, width = 3, 2
+        coeffs_true = dual.forward_coefficients(np.eye(4), self.s, self.f, self.r, self.s_prime, self.f_prime, self.r_prime)
+        raw_c = self.rng.uniform(0, 360 * 3, n_frames)
+        raw_cp = 5 * raw_c
+        true_c = raw_c + c1_true
+        true_cp = raw_cp + c1_prime_true
+        r_scalar = dual.evaluate_intensity(coeffs_true, true_c, true_cp)
+        # Small per-pixel perturbation so the (H, W) maps aren't just a
+        # broadcasted copy of one scalar -- a genuine, if tiny, per-pixel
+        # signal to reduce via nanmedian.
+        r_grid = r_scalar[:, np.newaxis, np.newaxis] + 1e-3 * self.rng.standard_normal((n_frames, height, width))
+
+        result = cal.run_dual_arm_calibration(raw_c, raw_cp, r_grid)
+
+        # C1/C1' are single mechanical/encoder-zero parameters, not
+        # per-pixel optical quantities (solve_phase_origins' docstring) --
+        # confirm they reduced to plain floats, not arrays that would
+        # crash correct_coefficients' per-harmonic rotation downstream.
+        self.assertIsInstance(result["c1_deg"], float)
+        self.assertIsInstance(result["c1_prime_deg"], float)
+        self.assertAlmostEqual(result["c1_deg"], c1_true, places=1)
+        self.assertAlmostEqual(result["c1_prime_deg"], c1_prime_true, places=1)
+
+        s_map = np.asarray(result["psg_qwp"]["s"])
+        self.assertEqual(s_map.shape, (height, width))
+        self.assertTrue(np.allclose(s_map, self.s, atol=0.02))
+        self.assertTrue(np.allclose(np.asarray(result["psa_qwp"]["s"]), self.s_prime, atol=0.02))
+
+
+class DualArmCalibrationCLIIntegrationTests(unittest.TestCase):
+    """End-to-end test against a REAL measure.py --dry-run --no-prompt
+    session (MMIE_ATOMIC_TARGETS.md target 6.3). This is what actually
+    caught the per-pixel crash above -- the purely-synthetic-array tests
+    never exercised measure.py's real Images/Logs/Config file format or
+    genuine (H, W)-shaped camera frames. DATA_ROOT is monkeypatched to a
+    temp directory for the duration of the test so it never writes into
+    the real project's Data/ folder."""
+
+    def test_load_and_run_against_real_dry_run_session(self):
+        import tempfile
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+        import measure as measure_module
+
+        original_data_root = measure_module.DATA_ROOT
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            measure_module.DATA_ROOT = Path(tmp_dir)
+            try:
+                exit_code = measure_module.run_fresh_session(
+                    "4x4", "continuous", "dual_cal_cli_test", dry_run=True, no_prompt=True
+                )
+            finally:
+                measure_module.DATA_ROOT = original_data_root
+
+            self.assertEqual(exit_code, 0)
+            run_dirs = list(Path(tmp_dir).glob("*_dual_cal_cli_test_*"))
+            self.assertEqual(len(run_dirs), 1)
+
+            result = cal.load_and_run_dual_arm_calibration(run_dirs[0])
+            self.assertIsInstance(result["c1_deg"], float)
+            self.assertIsInstance(result["c1_prime_deg"], float)
+            self.assertTrue(np.isfinite(result["c1_deg"]))
+            self.assertTrue(np.isfinite(result["c1_prime_deg"]))
+            # measure.py's dry-run camera is a generic synthetic gradient,
+            # not a physics-aware polarimetry model -- DRY_RUN_WALKTHROUGH.md
+            # documents this explicitly, so psg_qwp/psa_qwp below are NOT
+            # expected to be physically meaningful. This test only confirms
+            # the real file-format loader and full pipeline run to
+            # completion without raising -- the physics itself is already
+            # validated against known ground truth by the tests above.
+            for target in ("psg_qwp", "psa_qwp"):
+                for key in ("s", "f", "p", "r", "delta_deg", "T"):
+                    self.assertIn(key, result[target])
 
 
 if __name__ == "__main__":

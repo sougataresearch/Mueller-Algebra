@@ -137,7 +137,7 @@ dry-run-first order of operations).
 - [`design.md`](design.md) — algorithm-level design decisions, including
   the two real bugs found and fixed along the way
 - [`rules.md`](rules.md) — coding standards and AI coding rules
-- [`testing.md`](testing.md) — validation strategy per suite (97 tests,
+- [`testing.md`](testing.md) — validation strategy per suite (101 tests,
   all passing)
 - [`decisions.md`](decisions.md) — this project's own ADR log
 - [`memory.md`](memory.md) — living project-status snapshot for future

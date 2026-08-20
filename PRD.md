@@ -48,10 +48,10 @@ working bench-control and analysis pipeline.
 - Every reconstruction/calibration module recovers a known, synthetically-
   generated Mueller matrix to near machine precision in the noiseless
   case, and degrades gracefully (not catastrophically) under added noise
-  — verified today: **97 tests across 5 hardware-independent suites, all
-  passing** (`common` 35, `section2_qwp_calibration` 20,
+  — verified 2026-08-20: **101 tests across 5 hardware-independent
+  suites, all passing** (`common` 35, `section2_qwp_calibration` 20,
   `section3_discrete_reconstruction` 13, `section4_single_arm_continuous`
-  14, `section5_dual_arm_continuous` 15).
+  16, `section5_dual_arm_continuous` 17).
 - A `--dry-run --no-prompt` pass of both acquisition scripts
   (`common/measure.py`, `section2_qwp_calibration/qwp_calibration.py`)
   completes end to end with no hardware installed, exercising every code
@@ -152,7 +152,3 @@ working bench-control and analysis pipeline.
 - Continuous-acquisition resume — `measure.py`'s continuous mode has never
   supported `--resume` (discrete only); an interrupted revolution or outer
   step restarts from scratch, by design (`common/README.md`).
-- A standalone CLI for the Section IV/V calibration cross-check modules —
-  `continuous_single_arm_calibration.py`/`continuous_dual_arm_calibration.py`
-  are library functions today, exercised only by their own test files (see
-  `MMIE_ATOMIC_TARGETS.md` Category 6).

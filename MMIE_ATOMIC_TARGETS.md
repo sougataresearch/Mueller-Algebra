@@ -136,7 +136,7 @@ verified 2026-08-20); known M recovered to near machine precision at
 
 ---
 
-## 6. Calibration Cross-Check CLI (Sections IV/V) — NOT STARTED
+## 6. Calibration Cross-Check CLI (Sections IV/V) — COMPLETE
 
 ### Already present
 
@@ -145,34 +145,64 @@ verified 2026-08-20); known M recovered to near machine precision at
 modules' `cross_check_against_part1()` — fully implemented and tested
 against synthetic data (Categories 4/5 above).
 
-### Current scope
+### Delivered
 
-Neither module has an `argparse`/`__main__` entry point. Today, using
-them means calling them from your own Python code, feeding in angle/
-intensity arrays read manually from `experiment_log.csv` + TIFFs — there
-is no `python continuous_single_arm_calibration.py <run_dir>` command.
+- [x] **6.1** `load_and_run_single_arm_calibration(run_dir)` /
+  `load_and_run_dual_arm_calibration(run_dir)` — read a `measure.py`
+  sample-absent continuous-mode run directory (reusing
+  `load_continuous_single_arm_run`/`load_dual_arm_run`, the same loaders
+  the reconstruction CLIs already use for a real sample) and drive the
+  full calibration sequence from it. Section IV's phase-reference
+  revolution (Eq. 57/58's "fixed-side + outer axis both at optical 0") is
+  read directly from that session's own outer=0 step
+  (`find_zero_outer_step()`) rather than requiring a second, separately-
+  captured revolution — `OUTER_ANGLES_DEG` must include `0.0` (the
+  `measure.py` default already does).
+- [x] **6.2** `argparse`/`__main__` wrapper for each calibration module:
+  a run directory, `--compare-to <calibration_result.json>`,
+  `--aggregation {mean,median}`, `--roi X Y W H`. Prints the recovered
+  parameters and (with `--compare-to`) the cross-check diff, and writes
+  `Results/single_arm_calibration_cross_check.json` /
+  `Results/dual_arm_calibration_cross_check.json`.
+- [x] **6.3** Two new tests per section (`test_accepts_genuine_per_pixel_intensities`,
+  `test_load_and_run_against_real_dry_run_session`) — the latter runs an
+  actual `measure.py --dry-run --no-prompt` session (`DATA_ROOT`
+  monkeypatched to a temp directory) and feeds its real output through the
+  new loader, not just synthetic in-memory arrays.
 
-### Small targets
+### Real bugs found and fixed while building this (not present before)
 
-- [ ] **6.1** A shared helper that reads a `measure.py` sample-absent
-  continuous-mode run directory (`experiment_log.csv` + `Images/`) into
-  the `(phase_ref_angles_deg, phase_ref_intensities,
-  outer_angles_deg, per_outer_rotating_angles_deg, per_outer_intensities)`
-  shape `run_single_arm_calibration()` expects — and the analogous shape
-  for `run_dual_arm_calibration()`.
-- [ ] **6.2** `argparse`/`__main__` wrapper for each calibration module,
-  taking a run directory and a `--compare-to <calibration_result.json>`
-  path, printing the cross-check diff — matching the reconstruction
-  scripts' own CLI shape for consistency.
-- [ ] **6.3** A test exercising the CLI end-to-end against a real
-  `--dry-run --no-prompt` `measure.py` session (not just the existing
-  synthetic-array unit tests).
+Manually running the new CLI against a real dry-run session (rather than
+only the pre-existing synthetic 1-D-array tests) immediately surfaced
+three crashes, all the same root cause — a function assumed its per-pixel
+inputs would already be scalar, and forced a direct `float()` cast that
+raises on a genuine `(H, W)` array:
 
-### Exit criteria
+- `continuous_single_arm_calibration.measure_phase_offset` (C1' is a
+  single mechanical/encoder-zero parameter, correctly reduced via
+  `nanmedian` — not a per-pixel optical quantity, and it must be scalar
+  regardless since it shifts the shared, frame-indexed angle axis
+  `fit_revolution_fourier`'s single design matrix depends on).
+- `continuous_single_arm_calibration.measure_non_rotating_side_defects`
+  (same fix, plus a second bug in the same function: `expected_b`'s
+  `(4,5)` shape didn't broadcast against a per-pixel `e_mat`'s `(4,5,H,W)`
+  without an explicit reshape — fixed with the same reshape-then-broadcast
+  pattern `reconstruct_single_arm`'s own `b_mat` handling already uses).
+- `continuous_dual_arm_calibration.solve_phase_origins`'s `phi_prime` (C1,
+  C1' are the same kind of single mechanical parameter as Section IV's
+  C1').
 
-Running the new CLI against a real (or dry-run) sample-absent session
-directory produces the same cross-check report the existing library
-functions already produce when called directly with synthetic data.
+See `decisions.md` ADR-011 for the full account. This is exactly the
+value target 6.3 was scoped to catch — the synthetic-array tests alone
+never exercised a genuine multi-pixel intensity shape.
+
+### Exit criteria — met
+
+Running the new CLI against a real `--dry-run --no-prompt` sample-absent
+session directory (verified 2026-08-20) produces the same cross-check
+report shape the library functions already produce with synthetic data;
+both sections' full suites pass (16/16, 17/17) including the new
+regression and integration tests.
 
 ---
 
@@ -235,10 +265,9 @@ stated, measured tolerance — the actual "this works for real," not just
 
 ## Status summary
 
-Categories 1-5 and 8: **COMPLETE**. Category 6 (calibration cross-check
-CLI): **NOT STARTED**, but low-risk — the underlying math is fully
-implemented and tested, only the file-reading/CLI glue is missing.
-Category 7 (real-hardware validation): **NOT STARTED**, and cannot be
-completed in this development environment — the single biggest gap
-between "the tests pass" and "this is known to work on a real bench"
-(`PRD.md`'s Risks, `memory.md`).
+Categories 1-6 and 8: **COMPLETE** (Category 6 completed 2026-08-20 — see
+its section above for the three real per-pixel bugs found and fixed along
+the way, `decisions.md` ADR-011). Category 7 (real-hardware validation):
+**NOT STARTED**, and cannot be completed in this development environment
+— the single biggest gap between "the tests pass" and "this is known to
+work on a real bench" (`PRD.md`'s Risks, `memory.md`).

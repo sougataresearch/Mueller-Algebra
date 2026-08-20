@@ -10,13 +10,19 @@ All five suites exist and pass, hardware-independent, verified
 | `test_measure` | `common/` | 35 | OK |
 | `test_qwp_calibration` | `section2_qwp_calibration/` | 20 | OK |
 | `test_discrete_reconstruction` | `section3_discrete_reconstruction/` | 13 | OK |
-| `test_continuous_single_arm` | `section4_single_arm_continuous/` | 14 | OK |
-| `test_continuous_dual_arm` | `section5_dual_arm_continuous/` | 15 | OK |
+| `test_continuous_single_arm` | `section4_single_arm_continuous/` | 16 | OK |
+| `test_continuous_dual_arm` | `section5_dual_arm_continuous/` | 17 | OK |
 
-**97 tests total, all passing**, no motors/camera/Kinesis/IDS Peak SDK
-required for any of them. `section2_qwp_calibration`'s suite is the
-slowest (~70s) — it exercises real golden-section search convergence
-against a synthetic optical-bench model, not a mocked instant result.
+**101 tests total, all passing**, no motors/camera/Kinesis/IDS Peak SDK
+required for any of them (two of the new tests below run an actual
+`measure.py --dry-run` session, but with `DATA_ROOT` monkeypatched to a
+temp directory — still no real hardware). `section2_qwp_calibration`'s
+suite is the slowest per-test-average (~70s) — it exercises real
+golden-section search convergence against a synthetic optical-bench
+model, not a mocked instant result. `test_continuous_single_arm`'s full
+suite now takes ~135s wall-clock, dominated by its one integration test's
+real 1080-frame dry-run acquisition (below) — everything else in that
+suite still runs in under a second.
 
 ## The primary correctness gate: synthetic round-trip
 
@@ -65,7 +71,7 @@ each mode recovers exactly the sub-block the mode table promises (and
 `suggest_angle_grid`'s full-rank/reproducibility guarantees (including the
 `0/45/90/135` aliasing-trap regression case).
 
-### `section4_single_arm_continuous/test_continuous_single_arm.py` (14 tests)
+### `section4_single_arm_continuous/test_continuous_single_arm.py` (16 tests)
 
 Synthetic round-trip for both 3×4 and 4×3: known M + known QWP defects →
 synthetic per-frame intensities at real, non-uniform logged angles →
@@ -75,12 +81,23 @@ recovery against injected ground truth, the cross-check-against-Section-II
 report, **a direct regression test at `measure.py`'s literal
 `OUTER_ANGLES_DEG` default** (`[0, 45, 90]` — the exact underdetermined-fit
 bug from `design.md` §2), that more outer angles further reduce noise, and
-`fit_outer_fourier`'s underdetermined-system guard. This is the one test
-file that reaches across section folders (reuses Section III's own
-generator/analyzer vector formulas for its synthetic forward model, since
-Section IV's physics is explicitly built on those same equations).
+`fit_outer_fourier`'s underdetermined-system guard. Also reaches across
+section folders (reuses Section III's own generator/analyzer vector
+formulas for its synthetic forward model, since Section IV's physics is
+explicitly built on those same equations) and, since 2026-08-20, across
+into `common/measure.py` too (one integration test only, monkeypatching
+`DATA_ROOT`).
 
-### `section5_dual_arm_continuous/test_continuous_dual_arm.py` (15 tests)
+Two tests added 2026-08-20 while building the calibration CLI
+(`MMIE_ATOMIC_TARGETS.md` Category 6): `test_accepts_genuine_per_pixel_intensities`
+(a genuine `(H, W)`-shaped synthetic round-trip — the crash class three
+functions had, found and fixed via `decisions.md` ADR-011) and
+`test_load_and_run_against_real_dry_run_session` (an actual
+`measure.py --dry-run --no-prompt` session, `DATA_ROOT` monkeypatched to a
+temp directory, fed through the new loader — this is what actually
+surfaced those bugs, not the pre-existing synthetic-array tests).
+
+### `section5_dual_arm_continuous/test_continuous_dual_arm.py` (17 tests)
 
 Synthetic round-trip: known M + known QWP defects → synthetic per-frame
 intensities at a real (phase-offset, 5:1-locked) angle trajectory →
@@ -91,7 +108,13 @@ C1/C1′ and s,f,s′,f′ recovery against injected ground truth, the
 cross-check-against-Section-II report, **the below-25-frames
 underdetermined-system guard** (`design.md` §3, and that exactly 25 is
 accepted), and that more frames beyond the minimum further reduce noise.
-Fully self-contained — no cross-section imports.
+No cross-section imports except (since 2026-08-20) one integration test's
+reach into `common/measure.py`, matching Section IV's own test file.
+
+Two tests added the same day, mirroring Section IV's additions above:
+`test_accepts_genuine_per_pixel_intensities` and
+`test_load_and_run_against_real_dry_run_session` (`DATA_ROOT`
+monkeypatched to a temp directory).
 
 ## Running Tests
 

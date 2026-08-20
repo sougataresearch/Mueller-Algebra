@@ -240,6 +240,109 @@ class SingleArmCalibrationRoundTripTests(unittest.TestCase):
         for field in ("s", "f", "r", "delta_deg", "T"):
             self.assertAlmostEqual(diffs[field]["diff"], 0.0, places=6)
 
+    def test_accepts_genuine_per_pixel_intensities(self):
+        """Regression test for two real crashes found while building the
+        calibration CLI (MMIE_ATOMIC_TARGETS.md Category 6):
+        measure_phase_offset and measure_non_rotating_side_defects both
+        used to force a direct float() cast that raised TypeError against
+        genuine (n_frames, H, W) per-pixel intensities -- every other test
+        in this file only ever exercises (n_frames,) scalar-per-frame
+        arrays, which never hit that path."""
+
+        mode, injected_offset_deg, n_outer, n_frames = "4x3", 6.25, 6, 60
+        height, width = 3, 2
+        rot_vec, outer_vec = _rotating_and_outer_vectors(mode, self.s_rot, self.f_rot, self.r_rot)
+        identity = np.eye(4)
+
+        def intensity_grid(true_c, outer_angle):
+            base = _intensity(mode, identity, rot_vec, outer_vec, true_c, outer_angle)
+            # Small per-pixel perturbation so the (H, W) maps aren't just a
+            # broadcasted copy of one scalar -- a genuine, if tiny,
+            # per-pixel signal to reduce via nanmedian.
+            return base + 1e-3 * self.rng.standard_normal((height, width))
+
+        raw_phase_angles = np.sort(self.rng.uniform(0, 360, n_frames))
+        true_phase_angles = raw_phase_angles + injected_offset_deg
+        phase_intensities = np.stack([intensity_grid(c, 0.0) for c in true_phase_angles], axis=0)
+
+        outer_angles = list(np.linspace(0, 150, n_outer))
+        per_outer_raw, per_outer_intensity = [], []
+        for outer_angle in outer_angles:
+            raw = np.sort(self.rng.uniform(0, 360, n_frames))
+            true_c = raw + injected_offset_deg
+            per_outer_raw.append(raw)
+            per_outer_intensity.append(np.stack([intensity_grid(c, outer_angle) for c in true_c], axis=0))
+
+        result = cal.run_single_arm_calibration(
+            mode, raw_phase_angles, phase_intensities, outer_angles, per_outer_raw, per_outer_intensity
+        )
+
+        # C1' is a single mechanical/encoder-zero parameter, not a
+        # per-pixel optical quantity (measure_phase_offset's docstring) --
+        # confirm it reduced to a plain float, not an array that would
+        # crash correct_revolution_angles' broadcast downstream.
+        self.assertIsInstance(result["c1_prime_deg"], float)
+        self.assertAlmostEqual(result["c1_prime_deg"], injected_offset_deg, places=1)
+
+        s_map = np.asarray(result["rotating_side"]["s"])
+        f_map = np.asarray(result["rotating_side"]["f"])
+        self.assertEqual(s_map.shape, (height, width))
+        self.assertEqual(f_map.shape, (height, width))
+        self.assertTrue(np.allclose(s_map, self.s_rot, atol=0.02))
+        self.assertTrue(np.allclose(f_map, self.f_rot, atol=0.02))
+
+        # measure_non_rotating_side_defects' own independent crash (the
+        # expected_b broadcast shape mismatch against a per-pixel e_mat).
+        max_deviation = result["outer_side_cross_check"]["max_deviation_from_trivial_B"]
+        self.assertIsInstance(max_deviation, float)
+        self.assertTrue(np.isfinite(max_deviation))
+        self.assertLess(max_deviation, 0.05)
+
+
+class SingleArmCalibrationCLIIntegrationTests(unittest.TestCase):
+    """End-to-end test against a REAL measure.py --dry-run --no-prompt
+    session (MMIE_ATOMIC_TARGETS.md target 6.3). This is what actually
+    caught the per-pixel crashes above -- the purely-synthetic-array tests
+    never exercised measure.py's real Images/Logs/Config file format or
+    genuine (H, W)-shaped camera frames. DATA_ROOT is monkeypatched to a
+    temp directory for the duration of the test so it never writes into
+    the real project's Data/ folder."""
+
+    def test_load_and_run_against_real_dry_run_session(self):
+        import tempfile
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+        import measure as measure_module
+
+        original_data_root = measure_module.DATA_ROOT
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            measure_module.DATA_ROOT = Path(tmp_dir)
+            try:
+                exit_code = measure_module.run_fresh_session(
+                    "4x3", "continuous", "cal_cli_test", dry_run=True, no_prompt=True
+                )
+            finally:
+                measure_module.DATA_ROOT = original_data_root
+
+            self.assertEqual(exit_code, 0)
+            run_dirs = list(Path(tmp_dir).glob("*_cal_cli_test_*"))
+            self.assertEqual(len(run_dirs), 1)
+
+            result = cal.load_and_run_single_arm_calibration(run_dirs[0])
+            self.assertEqual(result["mode"], "4x3")
+            self.assertIsInstance(result["c1_prime_deg"], float)
+            self.assertTrue(np.isfinite(result["c1_prime_deg"]))
+            # measure.py's dry-run camera is a generic synthetic gradient,
+            # not a physics-aware polarimetry model (unlike Section II's
+            # DryRunOpticalBench) -- DRY_RUN_WALKTHROUGH.md documents this
+            # explicitly, so the recovered s/f/r below are NOT expected to
+            # be physically meaningful. This test only confirms the real
+            # file-format loader and the full calibration pipeline run to
+            # completion without raising -- the physics itself is already
+            # validated against known ground truth by the tests above.
+            for key in ("s", "f", "p", "r", "delta_deg", "T"):
+                self.assertIn(key, result["rotating_side"])
+
 
 if __name__ == "__main__":
     unittest.main()

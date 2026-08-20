@@ -79,10 +79,25 @@ the two — `cross_check_against_part1()` diffs them directly. Agreement is
 confidence in both calibrations; disagreement flags something to
 investigate (alignment drift, a bad null, camera nonlinearity).
 
+Has its own CLI now (`--compare-to`): point it at a *sample-absent*
+`measure.py` 3x4/4x3 continuous-mode session — its `OUTER_ANGLES_DEG` must
+include `0.0`, since the phase-reference revolution Eq. 57/58 need
+(fixed-side + outer axis both at optical 0) is physically the same
+configuration as that session's own outer=0 step, and is read from it
+directly rather than requiring a second, separately-captured revolution
+(see `find_zero_outer_step()`'s docstring).
+
 ## Output
 
-Same schema as Section III: `Results/mueller_matrix.npy` +
+Reconstruction (`continuous_single_arm_reconstruction.py`): same schema as
+Section III: `Results/mueller_matrix.npy` +
 `Results/mueller_matrix_summary.json`.
+
+Calibration cross-check (`continuous_single_arm_calibration.py`):
+`Results/single_arm_calibration_cross_check.json` — the recovered `C1′`,
+rotating-side `{s,f,r,delta_deg,T}`, source response, outer-side
+cross-check diagnostic, and (with `--compare-to`) the diff against Section
+II's numbers for the same QWP.
 
 ## Running it
 
@@ -90,6 +105,11 @@ Same schema as Section III: `Results/mueller_matrix.npy` +
 python ..\common\measure.py --mode 4x3 --acquisition continuous --dry-run --no-prompt --run-label sample2
 python continuous_single_arm_reconstruction.py "..\Data\2026-08-18_sample2_01" `
     --rotating-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01"
+
+# Built-in calibration cross-check (separate, sample-absent session):
+python ..\common\measure.py --mode 4x3 --acquisition continuous --dry-run --no-prompt --run-label calcheck4
+python continuous_single_arm_calibration.py "..\Data\2026-08-18_calcheck4_01" `
+    --compare-to "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01\Config\calibration_result.json"
 ```
 
 ## Testing

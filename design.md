@@ -136,15 +136,18 @@ continuous_single_arm_calibration.cross_check_against_part1(single_arm_result,
 continuous_dual_arm_reconstruction.reconstruct(run_dir, psg_calibration_dir,
                                                 psa_calibration_dir, roi, scalar_calibration) -> dict
 continuous_dual_arm_calibration.run_dual_arm_calibration(...) -> dict   # mirrors single-arm's shape
+
+continuous_single_arm_calibration.load_and_run_single_arm_calibration(run_dir) -> dict
+continuous_dual_arm_calibration.load_and_run_dual_arm_calibration(run_dir) -> dict
 ```
 
-The two calibration cross-check functions (`run_single_arm_calibration`,
-`run_dual_arm_calibration`) are **not** wired to a CLI or to `measure.py`'s
-output format directly — they take raw angle/intensity arrays, which today
-only their own test files (`test_continuous_single_arm.py`,
-`test_continuous_dual_arm.py`) construct. Building a CLI wrapper that reads
-a real sample-absent `Data/<run>/` continuous-mode folder and feeds these
-functions is open — see `MMIE_ATOMIC_TARGETS.md` Category 6.
+`load_and_run_single_arm_calibration`/`load_and_run_dual_arm_calibration`
+(added 2026-08-20, `MMIE_ATOMIC_TARGETS.md` Category 6) wire
+`run_single_arm_calibration`/`run_dual_arm_calibration` to a real
+sample-absent `Data/<run>/` continuous-mode folder, reusing the
+reconstruction modules' own loaders. Both now have an `argparse` CLI
+(`--compare-to`, `--roi`, `--aggregation`) — see the section READMEs'
+"Built-in calibration" sections and `RECIPE.md`.
 
 ## 7. Open questions
 
@@ -152,9 +155,9 @@ functions is open — see `MMIE_ATOMIC_TARGETS.md` Category 6.
   actual scale (one camera frame per reconstruction) — no reason to
   revisit unless frame sizes or sample counts grow enough to matter, which
   hasn't happened.
-- **CLI for Section IV/V calibration cross-check** (above) — the math is
-  implemented and tested against synthetic data; only the "read a real
-  `measure.py` output folder and call it" glue is missing.
+- ~~CLI for Section IV/V calibration cross-check~~ — done 2026-08-20, see
+  §6 above and `decisions.md` ADR-011 (which also documents three real
+  per-pixel bugs the CLI's own testing found and fixed).
 - **Real-hardware validation** — every synthetic round-trip test confirms
   the math against its own stated forward model; nothing here has been
   run against an actual bench in this development environment. This is

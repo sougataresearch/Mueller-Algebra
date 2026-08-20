@@ -46,6 +46,8 @@ investigation) -- see cross_check_against_part1().
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from continuous_dual_arm_reconstruction import THETA_INDICES, _theta, fit_dual_arm_fourier
@@ -75,11 +77,22 @@ def solve_phase_origins(raw_coeffs: dict) -> dict:
     """Eq. (74)/(75)/(76): from the RAW (primed, phase-uncorrected)
     Fourier fit of a system-absent calibration run, recover C1, C1' from
     the two largest (4th, 6th) harmonics, with 2nd/8th/10th as an
-    independent consistency check."""
+    independent consistency check.
+
+    Each phi_j (and so C1, C1') is reduced to a single scalar (nanmedian)
+    even when raw_coeffs holds genuine per-pixel (H, W) maps: like Section
+    IV's C1', these are properties of the rotating stages' own mechanical/
+    encoder zero, not spatially-varying optical quantities -- and
+    correct_coefficients (below) needs a single phi_j per harmonic to
+    rotate every pixel's raw coefficient pair by, not a per-pixel angle.
+    Found while building the calibration CLI (MMIE_ATOMIC_TARGETS.md
+    Category 6): a real measure.py session's full-frame intensities
+    crashed the previous direct float() cast."""
 
     def phi_prime(j: int) -> float:
         sign = _EXPECTED_AJ_SIGN[j]
-        return float(-np.arctan2(sign * np.asarray(raw_coeffs[f"b{j}"]), sign * np.asarray(raw_coeffs[f"a{j}"])))
+        phi = -np.arctan2(sign * np.asarray(raw_coeffs[f"b{j}"]), sign * np.asarray(raw_coeffs[f"a{j}"]))
+        return float(np.nanmedian(phi))
 
     phi2, phi4, phi6, phi8, phi10 = (phi_prime(j) for j in (2, 4, 6, 8, 10))
     c1_rad = (phi6 - phi4) / 4.0
@@ -178,3 +191,161 @@ def cross_check_against_part1(dual_arm_result: dict, part1_summaries: dict, aggr
             target_diffs[field] = {"continuous_dual_arm": this_value, "part1_discrete": part1_value, "diff": this_value - part1_value}
         diffs[target] = target_diffs
     return diffs
+
+
+# ============================================================================
+# I/O -- reads a real, sample-absent measure.py 4x4 continuous-mode session
+# and drives run_dual_arm_calibration() from it (MMIE_ATOMIC_TARGETS.md
+# Category 6 -- previously this module was library-only, exercised only by
+# test_continuous_dual_arm.py's synthetic arrays).
+# ============================================================================
+
+def load_and_run_dual_arm_calibration(run_dir) -> dict:
+    """Reads a sample-absent measure.py 4x4 continuous-mode session (via
+    continuous_dual_arm_reconstruction.load_dual_arm_run, the same loader
+    the reconstruction CLI uses for a real sample) and runs the full
+    Sec. V.B sequence above. Unlike Section IV, no separate phase-reference
+    revolution needs to be located -- C1/C1' both come from one 25-
+    coefficient fit of the whole session (Eq. 74/75), so
+    load_dual_arm_run's (c_deg, cp_deg, intensities) maps directly onto
+    run_dual_arm_calibration's own signature."""
+
+    from continuous_dual_arm_reconstruction import load_dual_arm_run
+
+    data = load_dual_arm_run(run_dir)
+    return run_dual_arm_calibration(data["c_deg"], data["cp_deg"], data["intensities"])
+
+
+def _reduce_to_scalar(value, roi, aggregation: str) -> float:
+    """Reduces a per-pixel (H, W) result to one number via an ROI median/
+    mean -- matching qwp_calibration.summarize_roi's aggregation choice. A
+    genuinely scalar value (e.g. this module fed ROI-mean-reduced rather
+    than per-pixel intensities upstream) is returned unchanged."""
+
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.ndim < 2:
+        return float(arr)
+    stat = np.nanmedian if aggregation == "median" else np.nanmean
+    x, y, w, h = roi
+    return float(stat(arr[y : y + h, x : x + w]))
+
+
+def summarize_qwp_side(qwp_side: dict, roi, aggregation: str) -> dict:
+    """Reduces run_dual_arm_calibration()'s per-pixel psg_qwp/psa_qwp dict
+    to a flat {field: float} dict via the ROI -- the shape both printing
+    and cross_check_against_part1() need."""
+
+    return {key: _reduce_to_scalar(value, roi, aggregation) for key, value in qwp_side.items()}
+
+
+def _infer_default_roi(result: dict):
+    """Whole-frame ROI derived from PSG_QWP's recovered s-map shape, or
+    None if the result is already scalar (non-per-pixel) end to end."""
+
+    s_array = np.asarray(result["psg_qwp"]["s"])
+    if s_array.ndim < 2:
+        return None
+    height, width = s_array.shape[-2:]
+    return (0, 0, width, height)
+
+
+# ============================================================================
+# Entry point
+# ============================================================================
+
+def _parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Hauge (1978) Section V.B built-in calibration + cross-check against Section II"
+    )
+    parser.add_argument(
+        "run_dir", type=Path,
+        help="measure.py 4x4 continuous-mode, SAMPLE-ABSENT session directory (Data/<run>/)",
+    )
+    parser.add_argument(
+        "--compare-to", type=Path, default=None, metavar="CALIBRATION_RESULT_JSON",
+        help="Section II qwp_calibration.py's Config/calibration_result.json (both QWPs), to cross-check against",
+    )
+    parser.add_argument(
+        "--aggregation", choices=("mean", "median"), default="median",
+        help="ROI aggregation for this module's own printed/saved summary (matches "
+             "qwp_calibration.py's AGGREGATION default of 'median'); independent of whichever "
+             "aggregation --compare-to's own file was saved with",
+    )
+    parser.add_argument("--roi", type=int, nargs=4, metavar=("X", "Y", "W", "H"), default=None)
+    return parser.parse_args()
+
+
+def main() -> int:
+    import json
+
+    args = _parse_args()
+    result = load_and_run_dual_arm_calibration(args.run_dir)
+    roi = tuple(args.roi) if args.roi else _infer_default_roi(result)
+
+    c1_deg = _reduce_to_scalar(result["c1_deg"], roi, args.aggregation)
+    c1_prime_deg = _reduce_to_scalar(result["c1_prime_deg"], roi, args.aggregation)
+    g_ip = _reduce_to_scalar(result["g_ip"], roi, args.aggregation)
+    psg_summary = summarize_qwp_side(result["psg_qwp"], roi, args.aggregation)
+    psa_summary = summarize_qwp_side(result["psa_qwp"], roi, args.aggregation)
+    b_magnitude = {key: _reduce_to_scalar(value, roi, args.aggregation) for key, value in result["raw_b_magnitude_check"].items()}
+    max_b_magnitude = max(b_magnitude.values())
+
+    print("Mode: 4x4 (dual-arm continuous, sample absent)")
+    print(f"C1: {c1_deg:.5f} deg   C1': {c1_prime_deg:.5f} deg")
+    print(f"Source response g*Ip: {g_ip:.6f}")
+    print(f"Max |raw b_j| (should be ~0 -- large values indicate misalignment): {max_b_magnitude:.3e}")
+    print("\n--- PSG_QWP recovered defect parameters (continuous, Sec. V.B) ---")
+    for key in ("s", "f", "r", "delta_deg", "T"):
+        print(f"  {key:10s} = {psg_summary[key]:.5f}")
+    print("\n--- PSA_QWP recovered defect parameters (continuous, Sec. V.B) ---")
+    for key in ("s", "f", "r", "delta_deg", "T"):
+        print(f"  {key:10s} = {psa_summary[key]:.5f}")
+
+    report: dict = {
+        "mode": "4x4",
+        "aggregation": args.aggregation,
+        "roi": {"x": roi[0], "y": roi[1], "width": roi[2], "height": roi[3]} if roi else None,
+        "c1_deg": c1_deg,
+        "c1_prime_deg": c1_prime_deg,
+        "source_response_g_ip": g_ip,
+        "raw_b_magnitude_check": b_magnitude,
+        "psg_qwp": psg_summary,
+        "psa_qwp": psa_summary,
+    }
+
+    if args.compare_to is not None:
+        part1_report = json.loads(args.compare_to.read_text(encoding="utf-8"))
+        available = list(part1_report.get("results", {}))
+        missing = [target for target in ("PSG_QWP", "PSA_QWP") if target not in part1_report.get("results", {})]
+        if missing:
+            raise ValueError(f"{args.compare_to} is missing calibration results for {missing} (found: {available}).")
+        part1_summaries = {
+            "PSG_QWP": part1_report["results"]["PSG_QWP"]["summary"],
+            "PSA_QWP": part1_report["results"]["PSA_QWP"]["summary"],
+        }
+        part1_aggregation = part1_report["aggregation"]
+        diffs = cross_check_against_part1(
+            {"psg_qwp": psg_summary, "psa_qwp": psa_summary}, part1_summaries, part1_aggregation
+        )
+        report["cross_check_against_part1"] = diffs
+        print(f"\n--- Cross-check against Section II ({args.compare_to}, aggregation={part1_aggregation!r}) ---")
+        for target, target_diffs in diffs.items():
+            print(f"  {target}:")
+            for field, values in target_diffs.items():
+                print(
+                    f"    {field:10s} continuous={values['continuous_dual_arm']:.5f}  "
+                    f"part1_discrete={values['part1_discrete']:.5f}  diff={values['diff']:+.5f}"
+                )
+
+    results_dir = Path(args.run_dir) / "Results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    out_path = results_dir / "dual_arm_calibration_cross_check.json"
+    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"\nSaved: {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
