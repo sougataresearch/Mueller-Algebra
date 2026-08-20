@@ -12,7 +12,10 @@ no motors, no camera required.
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -241,6 +244,40 @@ class SuggestAngleGridTests(unittest.TestCase):
         fixed = {"PSG_Polarizer": 0.0}
         rank = dr._ideal_grid_rank("3x4", [0.0, 45.0, 90.0, 135.0], fixed)
         self.assertLess(rank, 12)
+
+
+class DiscreteMeasurementWrapperTests(unittest.TestCase):
+    """discrete_measurement.py -- Section III's own capture main, a thin
+    wrapper around common/measure.py (this project's "each section
+    folder visibly contains both its own mains" convention). DATA_ROOT is
+    monkeypatched to a temp directory so this never writes into the real
+    project's Data/ folder."""
+
+    def test_presets_discrete_acquisition_any_mode(self):
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import discrete_measurement
+
+        original_data_root = discrete_measurement.measure.DATA_ROOT
+        original_argv = sys.argv
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            discrete_measurement.measure.DATA_ROOT = Path(tmp_dir)
+            sys.argv = [
+                "discrete_measurement.py", "--mode", "3x3", "--dry-run", "--no-prompt", "--run-label", "wraptest",
+            ]
+            try:
+                exit_code = discrete_measurement.main()
+            finally:
+                sys.argv = original_argv
+                discrete_measurement.measure.DATA_ROOT = original_data_root
+
+            self.assertEqual(exit_code, 0)
+            run_dirs = list(Path(tmp_dir).glob("*_wraptest_*"))
+            self.assertEqual(len(run_dirs), 1)
+            config = json.loads((run_dirs[0] / "Config" / "experiment_config.json").read_text())
+            self.assertEqual(config["acquisition_type"], "discrete")
+            self.assertEqual(config["mode"], "3x3")
 
 
 if __name__ == "__main__":

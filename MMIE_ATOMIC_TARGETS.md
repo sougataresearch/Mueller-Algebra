@@ -66,12 +66,26 @@ combination.
   problem (wrong axis, misalignment, dirty optics, stray light), not just
   noise. Both intensities saved in `calibration_result.json`'s
   `null_search` field.
+- [x] **2.8** Split into `run_acquisition()`/`run_reconstruction()` plus
+  their own standalone CLIs (`qwp_calibration_capture.py`,
+  `qwp_calibration_reconstruction.py`), so capture and the retardance
+  solve can run as two separate steps — mirroring Sections III/IV/V's own
+  acquisition/reconstruction split. `qwp_calibration.py`'s combined flow
+  is now exactly these two functions called in sequence, unchanged in
+  observable behavior (`decisions.md` ADR-013). Dry-run now writes real
+  TIFFs to disk (previously in-memory only), matching every other
+  section's own dry-run convention.
+- [x] **2.9** 27 tests (up from 25), including two new ones for the
+  split: `run_acquisition` writes the expected `Images/`+
+  `Config/experiment_config.json` even in `--dry-run`, and split
+  acquisition+reconstruction matches the combined flow's own numbers.
 
 ### Exit criteria — met
 
-`python -m unittest test_qwp_calibration -v` passes (25/25, verified
+`python -m unittest test_qwp_calibration -v` passes (27/27, verified
 2026-08-20); `Config/calibration_result.json` is written with both QWPs'
-`s,f,r,delta_deg,T` and discovered zero-offsets.
+`s,f,r,delta_deg,T` and discovered zero-offsets, whether run combined or
+as the two split scripts.
 
 ---
 
@@ -86,18 +100,22 @@ combination.
   fallback (`design.md` §4).
 - [x] **3.4** Realizability diagnostic (`trace(M^T@M) <= 4*M00^2`) on
   every reconstruction.
-- [x] **3.5** 13 tests, including the aliasing-trap regression case and
-  each mode's exact NaN sub-block confirmation.
+- [x] **3.5** `discrete_measurement.py` — Section III's own capture main,
+  a thin wrapper around `common/measure.py` presetting
+  `--acquisition discrete` (`decisions.md` ADR-013).
+- [x] **3.6** 14 tests, including the aliasing-trap regression case, each
+  mode's exact NaN sub-block confirmation, and the capture wrapper's own
+  dry-run test.
 
 ### Exit criteria — met
 
-`python -m unittest test_discrete_reconstruction -v` passes (13/13,
+`python -m unittest test_discrete_reconstruction -v` passes (14/14,
 verified 2026-08-20); known M recovered to near machine precision
 noiseless, both exact-inverse and least-squares paths.
 
 ---
 
-## 4. Section IV — Single-Arm Continuous — COMPLETE (CLI cross-check open, see Category 6)
+## 4. Section IV — Single-Arm Continuous — COMPLETE
 
 - [x] **4.1** Per-revolution Fourier fit + 4-vector recovery (Hauge Eq.
   41-43).
@@ -107,19 +125,25 @@ noiseless, both exact-inverse and least-squares paths.
   function, not duplicated).
 - [x] **4.4** Built-in calibration module (`continuous_single_arm_calibration.py`):
   C1′ phase offset, rotating-side s′/f′, outer-side cross-check,
-  source-response recovery, `cross_check_against_part1()`.
-- [x] **4.5** 14 tests, including the exact `OUTER_ANGLES_DEG=[0,45,90]`
-  regression case for target 4.2's bug.
+  source-response recovery, `cross_check_against_part1()`, with its own
+  `--compare-to` CLI (Category 6).
+- [x] **4.5** `continuous_single_arm_measurement.py` — Section IV's own
+  capture main, a thin wrapper around `common/measure.py` presetting
+  `--acquisition continuous` and restricting `--mode` to 3x4/4x3
+  (`decisions.md` ADR-013).
+- [x] **4.6** 17 tests, including the exact `OUTER_ANGLES_DEG=[0,45,90]`
+  regression case for target 4.2's bug and the capture wrapper's own
+  dry-run test.
 
 ### Exit criteria — met
 
-`python -m unittest test_continuous_single_arm -v` passes (14/14,
+`python -m unittest test_continuous_single_arm -v` passes (17/17,
 verified 2026-08-20); known M recovered to near machine precision at
 `measure.py`'s literal default outer-angle config.
 
 ---
 
-## 5. Section V — Dual-Arm Continuous (Production Path) — COMPLETE (CLI cross-check open, see Category 6)
+## 5. Section V — Dual-Arm Continuous (Production Path) — COMPLETE
 
 - [x] **5.1** 25-coefficient combined Fourier fit against real logged
   `(C, C')` pairs.
@@ -130,14 +154,18 @@ verified 2026-08-20); known M recovered to near machine precision at
   ADR-007).
 - [x] **5.5** Built-in calibration module
   (`continuous_dual_arm_calibration.py`): C1/C1′ phase origins,
-  both-QWP s/f/s′/f′, `cross_check_against_part1()`.
-- [x] **5.6** 15 tests, including the below-25-frames regression case and
-  the noiseless exact-satisfaction check for all 9 consistency
-  relationships.
+  both-QWP s/f/s′/f′, `cross_check_against_part1()`, with its own
+  `--compare-to` CLI (Category 6).
+- [x] **5.6** `continuous_dual_arm_measurement.py` — Section V's own
+  capture main, a thin wrapper around `common/measure.py` fixed fully to
+  `--mode 4x4 --acquisition continuous` (`decisions.md` ADR-013).
+- [x] **5.7** 18 tests, including the below-25-frames regression case, the
+  noiseless exact-satisfaction check for all 9 consistency relationships,
+  and the capture wrapper's own dry-run test.
 
 ### Exit criteria — met
 
-`python -m unittest test_continuous_dual_arm -v` passes (15/15, verified
+`python -m unittest test_continuous_dual_arm -v` passes (18/18, verified
 2026-08-20); all 16 elements recovered with no structural `NaN`s.
 
 ---

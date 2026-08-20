@@ -211,3 +211,65 @@
   avoid a non-uniform illumination profile biasing the search) was judged
   sufficient; revisit only if a real session's per-pixel retardance maps
   show spatial structure that a single global zero-offset can't explain.
+
+## ADR-013: Capture/reconstruct split for every section, including Section II
+
+- **Decision**: every section's folder now visibly contains two runnable
+  mains — one that captures images, one that reads a folder path and
+  computes the result. Sections III/IV/V already had this via shared
+  `common/measure.py`; each gained a thin, section-local wrapper
+  (`discrete_measurement.py`, `continuous_single_arm_measurement.py`,
+  `continuous_dual_arm_measurement.py`) that presets `measure.py`'s own
+  `run_fresh_session()`/`resume_discrete_session()` with that section's
+  mode/acquisition-type, so the capture main is visible locally too, not
+  only in `common/`. Section II (`qwp_calibration.py`) had no split at
+  all — null search, capture, and the retardance solve happened in one
+  function — so it was refactored into `run_acquisition()` +
+  `run_reconstruction()`, each with its own CLI
+  (`qwp_calibration_capture.py`, `qwp_calibration_reconstruction.py`).
+  `qwp_calibration.py`'s own combined flow is now just those two functions
+  called in sequence — unchanged in observable behavior, confirmed by all
+  25 pre-existing tests passing unmodified.
+- **Why**: requested directly by the project owner, who wanted the same
+  "one main to measure, one main to reconstruct from a folder" shape
+  uniformly across every section, with both files physically present in
+  that section's own folder — not just conceptually available via a
+  shared script elsewhere.
+- **Forced consequence for Section II's dry-run**: splitting acquisition
+  from reconstruction only works if reconstruction can read a *real*
+  folder back — but `qwp_calibration.py`'s dry-run mode never wrote the
+  calibration-angle images to disk at all (`_dry_run_uniform_frame`
+  stayed in memory), the one hold-out from this project's own
+  always-writes-files dry-run convention (`common/measure.py`'s dry-run
+  camera always writes TIFFs). Fixed by adding `_capture_or_simulate()`, a
+  single helper both real and dry-run capture sites now go through, so
+  `Images/bright_reference.tiff`, `Images/<target>/dark.tiff`, and
+  `Images/<target>/C_<angle>.tiff` are real files either way.
+- **New file**: `Config/experiment_config.json` (acquisition's output) —
+  targets actually captured, `angle_mode`, `calibration_angles_deg`,
+  `null_search_mode`, `dry_run`, `dark_subtracted`,
+  `assumed_zero_offsets_deg`, `discovered_zero_offsets_deg`, and each
+  target's `null_search` intensities (needed by
+  `null_intensity_mismatch_warning`, ADR-012). `run_reconstruction()`
+  reads this plus `Images/` to reproduce `compute_calibration`/
+  `fit_calibration_least_squares` exactly, including re-deriving the ROI
+  the same way `run_calibration` always did (from the first captured
+  calibration-angle frame, falling back to `bright_reference.tiff` — both
+  now guaranteed to exist on disk, so nothing needed to be persisted for
+  ROI specifically).
+- **A deliberate, harmless behavior refinement**: `experiment_config.json`'s
+  (and therefore the split flow's `calibration_result.json`'s) `"targets"`
+  field now lists only targets actually captured, not every originally-
+  requested one (the combined flow's pre-refactor behavior could include
+  a target that was skipped via a declined physical-swap confirmation).
+  No existing test exercises that skip path in `--dry-run` (confirmations
+  are bypassed entirely in dry-run), so this doesn't affect any test, and
+  is more honest than the old behavior.
+- **Verification**: manual end-to-end run
+  (`qwp_calibration_capture.py --dry-run --no-prompt --target both` then
+  `qwp_calibration_reconstruction.py <run_dir>`) reproduced the same
+  numbers as `qwp_calibration.py`'s own combined dry-run — confirmed
+  `DryRunOpticalBench` is fully deterministic run-to-run, not just
+  approximately reproducible. A new consistency test formalizes this
+  (`test_split_acquisition_then_reconstruction_matches_combined_run_calibration`).
+  111/111 tests passing across all 5 suites (up from 106).

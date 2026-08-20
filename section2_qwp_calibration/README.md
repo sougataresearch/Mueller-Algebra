@@ -6,7 +6,9 @@ ideal value you'd assume from the spec sheet?
 
 | File | What it is |
 |---|---|
-| `qwp_calibration.py` | Null-search + three-angle closed-form retardance measurement (Hauge Eqs. 19-21, Eq. 4). The only file you run. |
+| `qwp_calibration.py` | Combined one-shot flow: null search + three-angle closed-form retardance measurement (Hauge Eqs. 19-21, Eq. 4), capture and solve together. |
+| `qwp_calibration_capture.py` | Same null search + capture, **acquisition only** — no math, see "Running it" below. |
+| `qwp_calibration_reconstruction.py` | Same closed-form solve, **reconstruction only** — reads a folder a capture run already wrote. |
 | `test_qwp_calibration.py` | Hardware-independent tests (see Testing, below). |
 
 ## The physical procedure (what the code is actually doing)
@@ -112,7 +114,20 @@ motor-to-optical offsets, diffed against your assumed `ZERO_OFFSETS_DEG`).
 This is the file every reconstruction section (III, IV, V) reads for the
 *real* QWP defect parameters, instead of assuming an ideal 90° retarder.
 
+`qwp_calibration_capture.py` (or `qwp_calibration.py`'s own capture half)
+also writes `Config/experiment_config.json` — targets, calibration
+angles, discovered zero-offsets, and each target's null-search
+intensities — the file `qwp_calibration_reconstruction.py` reads back to
+produce `calibration_result.json` above, plus every captured TIFF under
+`Images/` (real hardware or `--dry-run` alike).
+
 ## Running it
+
+| File | What it is |
+|---|---|
+| `qwp_calibration.py` | Combined one-shot flow: null search + capture + retardance solve, all in one run. |
+| `qwp_calibration_capture.py` | **Capture only** — null search + image capture, no math. |
+| `qwp_calibration_reconstruction.py` | **Reconstruction only** — retardance solve from a folder `qwp_calibration_capture.py` (or `qwp_calibration.py`) already wrote. |
 
 ```powershell
 python qwp_calibration.py --dry-run --no-prompt --target both
@@ -120,12 +135,26 @@ python qwp_calibration.py --dry-run --no-prompt --target both
 # Lower-noise variant: 12 angles, least-squares fit instead of the exact 3-point solve.
 python qwp_calibration.py --dry-run --no-prompt --target both `
     --calibration-angle-mode least_squares --num-calibration-angles 12
+
+# Or run capture and reconstruction as two separate steps/sessions:
+python qwp_calibration_capture.py --dry-run --no-prompt --target both
+python qwp_calibration_reconstruction.py "Data\QWP_Calibration\2026-08-20_PSG_QWPandPSA_QWP_01"
 ```
 
 `--target` accepts `PSG_QWP`, `PSA_QWP`, or `both` (default — calibrates
 both, back-to-back, in one session with an operator-confirmed physical
 swap in between). Drop `--dry-run` only after the checklist in
 `../common/README.md` is done and a dry-run pass looks sane.
+
+`qwp_calibration.py` is exactly `qwp_calibration_capture.py` followed by
+`qwp_calibration_reconstruction.py` — same functions
+(`run_acquisition()`/`run_reconstruction()`), same output, just run as
+one script instead of two. The split scripts write a
+`Config/experiment_config.json` in between (targets, calibration angles,
+discovered zero-offsets, null-search intensities) — everything
+reconstruction needs that isn't recoverable from the images alone. Use
+the split when you want to capture now and reconstruct later (or on a
+different machine), or the combined script for a normal one-shot session.
 
 ## Testing
 

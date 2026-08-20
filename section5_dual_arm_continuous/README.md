@@ -7,8 +7,9 @@ fastest, most-overdetermined, highest priority of the four sections.
 
 | File | What it is |
 |---|---|
-| `continuous_dual_arm_reconstruction.py` | The 25-coefficient Fourier fit + full 16-element inversion (Hauge Eq. 62-66). |
-| `continuous_dual_arm_calibration.py` | Built-in phase-origin (C1, C1′) and both-QWP-defect calibration (Hauge Sec. V.B). |
+| `continuous_dual_arm_measurement.py` | **Capture main** — thin wrapper around `../common/measure.py`, fixed to `--mode 4x4 --acquisition continuous`. |
+| `continuous_dual_arm_reconstruction.py` | **Reconstruction main** — the 25-coefficient Fourier fit + full 16-element inversion (Hauge Eq. 62-66). |
+| `continuous_dual_arm_calibration.py` | Built-in phase-origin (C1, C1′) and both-QWP-defect calibration (Hauge Sec. V.B), with its own `--compare-to` CLI. |
 | `test_continuous_dual_arm.py` | Synthetic round-trip tests (see Testing, below). |
 
 Covers `measure.py`'s **4x4 continuous** mode: `PSG_QWP` and `PSA_QWP`
@@ -83,8 +84,15 @@ both QWPs.
 
 ## Running it
 
+`continuous_dual_arm_measurement.py` and
+`..\common\measure.py --mode 4x4 --acquisition continuous` are the same
+acquisition, callable either way — the former lives in this folder
+specifically so this section visibly has both of its own mains:
+
 ```powershell
-python ..\common\measure.py --mode 4x4 --acquisition continuous --dry-run --no-prompt --run-label sample3
+python continuous_dual_arm_measurement.py --dry-run --no-prompt --run-label sample3
+# equivalent: python ..\common\measure.py --mode 4x4 --acquisition continuous --dry-run --no-prompt --run-label sample3
+
 python continuous_dual_arm_reconstruction.py "..\Data\2026-08-18_sample3_01" `
     --psg-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01" `
     --psa-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01"

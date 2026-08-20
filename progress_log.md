@@ -201,3 +201,61 @@ fine-grained checklist) or `memory.md` (the living status snapshot).
   intensity against the bare crossed-polarizer null's own; documented in
   `decisions.md` ADR-012, `MMIE_ATOMIC_TARGETS.md` target 2.7, and the
   section's own README.
+
+---
+
+## 2026-08-20 (later still) — Capture/reconstruct split for every section
+
+### Discussed
+
+- Project owner asked whether Section II could have two separate main
+  files (one to run the whole experiment/capture images, one to fetch
+  data from a folder path and compute the retardance), "and similar for
+  other sections too."
+- Pointed out Sections III/IV/V already have exactly this shape via
+  shared `common/measure.py` + each section's own `*_reconstruction.py`.
+  Project owner clarified they want the capture main physically present
+  in each section's own folder too, not only reachable via `common/`.
+  Used `EnterPlanMode` given the scope (refactoring an already-tested,
+  working module plus adding new files across four folders) — resolved
+  via `AskUserQuestion`: (1) each section folder gets its own visible
+  capture main (thin wrappers for III/IV/V, a real split for II), (2)
+  dry-run should start writing real TIFFs to disk for Section II so the
+  split is genuinely testable, (3) keep `qwp_calibration.py`'s combined
+  flow working, refactored to share code with the two new scripts.
+- Refactored `qwp_calibration.py`'s single `run_calibration()` into
+  `run_acquisition()` + `run_reconstruction()`, added
+  `qwp_calibration_capture.py`/`qwp_calibration_reconstruction.py` as
+  their own CLIs, and a new `Config/experiment_config.json` acquisition
+  writes for reconstruction to read back. Added `_capture_or_simulate()`
+  so dry-run writes real TIFFs (previously in-memory only). All 25
+  pre-existing tests passed unmodified, confirming the refactor didn't
+  change `run_calibration`'s observable behavior.
+- Added thin capture-main wrappers for Sections III/IV/V
+  (`discrete_measurement.py`, `continuous_single_arm_measurement.py`,
+  `continuous_dual_arm_measurement.py`), each just presetting
+  `common/measure.py`'s mode/acquisition-type for that section — never
+  reimplementing acquisition.
+- Verified manually end-to-end: ran each new wrapper and the Section II
+  split scripts against real dry-run sessions; split acquisition +
+  reconstruction reproduced the exact same numbers as the combined
+  `qwp_calibration.py` run (`DryRunOpticalBench` is fully deterministic).
+- Added tests: two for Section II's split (writes expected files even in
+  dry-run; split matches combined), one per section for the new capture
+  wrappers (confirms the preset mode/acquisition-type, and for Section
+  IV, that `--mode 4x4` is genuinely rejected). Documented the whole
+  change as `decisions.md` ADR-013.
+
+### Action items
+
+- [x] Build a capture main + reconstruct-from-folder main for every
+  section (Section II split into two new scripts; III/IV/V gained
+  thin capture-main wrappers around `common/measure.py`).
+- [ ] Real-hardware validation — still the one open item in
+  `MMIE_ATOMIC_TARGETS.md` (Category 7).
+- **Session summary**: every section folder now visibly contains two
+  runnable mains. Section II's `qwp_calibration.py` refactored into
+  `run_acquisition()`/`run_reconstruction()` (behavior-preserving, all
+  pre-existing tests pass unmodified) with two new standalone CLIs;
+  Sections III/IV/V gained thin capture-main wrappers. 111/111 tests
+  passing across all 5 suites (up from 106).

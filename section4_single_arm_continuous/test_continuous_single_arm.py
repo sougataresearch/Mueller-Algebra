@@ -344,5 +344,51 @@ class SingleArmCalibrationCLIIntegrationTests(unittest.TestCase):
                 self.assertIn(key, result["rotating_side"])
 
 
+class ContinuousSingleArmMeasurementWrapperTests(unittest.TestCase):
+    """continuous_single_arm_measurement.py -- Section IV's own capture
+    main, a thin wrapper around common/measure.py (this project's "each
+    section folder visibly contains both its own mains" convention).
+    DATA_ROOT is monkeypatched to a temp directory so this never writes
+    into the real project's Data/ folder."""
+
+    def test_presets_continuous_acquisition_restricted_to_3x4_4x3(self):
+        import json
+        import tempfile
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import continuous_single_arm_measurement as wrapper
+
+        # 4x4 is Section V's mode, not this section's -- confirm the
+        # wrapper's own --mode choices genuinely exclude it.
+        with self.assertRaises(SystemExit):
+            original_argv = sys.argv
+            sys.argv = ["continuous_single_arm_measurement.py", "--mode", "4x4"]
+            try:
+                wrapper.parse_args()
+            finally:
+                sys.argv = original_argv
+
+        original_data_root = wrapper.measure.DATA_ROOT
+        original_argv = sys.argv
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wrapper.measure.DATA_ROOT = Path(tmp_dir)
+            sys.argv = [
+                "continuous_single_arm_measurement.py", "--mode", "4x3", "--dry-run", "--no-prompt",
+                "--run-label", "wraptest4",
+            ]
+            try:
+                exit_code = wrapper.main()
+            finally:
+                sys.argv = original_argv
+                wrapper.measure.DATA_ROOT = original_data_root
+
+            self.assertEqual(exit_code, 0)
+            run_dirs = list(Path(tmp_dir).glob("*_wraptest4_*"))
+            self.assertEqual(len(run_dirs), 1)
+            config = json.loads((run_dirs[0] / "Config" / "experiment_config.json").read_text())
+            self.assertEqual(config["acquisition_type"], "continuous")
+            self.assertEqual(config["mode"], "4x3")
+
+
 if __name__ == "__main__":
     unittest.main()

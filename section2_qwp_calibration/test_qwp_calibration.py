@@ -356,6 +356,62 @@ class FullDryRunSessionTests(unittest.TestCase):
         self.assertTrue((run_dirs[0] / "Results" / "PSG_QWP" / "B2_map.npy").is_file())
         self.assertTrue((run_dirs[0] / "Results" / "PSG_QWP" / "B4_map.npy").is_file())
 
+    def test_run_acquisition_writes_images_and_experiment_config_even_in_dry_run(self):
+        """run_acquisition() (MMIE_ATOMIC_TARGETS.md target 2.8 -- the
+        capture/reconstruct split) must write real TIFFs to disk even in
+        --dry-run, not just in real hardware mode -- the change
+        _capture_or_simulate exists for, needed so
+        qwp_calibration_reconstruction.py can read a dry-run session back
+        from a folder the same way it would a real one."""
+
+        run_dir = qc.run_acquisition(("PSG_QWP",), "automated", dry_run=True, no_prompt=True)
+        self.assertIsNotNone(run_dir)
+
+        self.assertTrue((run_dir / "Images" / "bright_reference.tiff").is_file())
+        self.assertTrue((run_dir / "Images" / "PSG_QWP" / "dark.tiff").is_file())
+        for angle in qc.CALIBRATION_ANGLES_DEG:
+            self.assertTrue((run_dir / "Images" / "PSG_QWP" / f"C_{angle:g}.tiff").is_file())
+
+        import json
+
+        config = json.loads((run_dir / "Config" / "experiment_config.json").read_text())
+        self.assertEqual(config["targets"], ["PSG_QWP"])
+        self.assertEqual(config["angle_mode"], "three_angle")
+        self.assertTrue(config["dry_run"])
+        self.assertIn("PSG_QWP", config["null_search"])
+        self.assertIn("pa_null_intensity", config["null_search"]["PSG_QWP"])
+        self.assertIn("compensator_null_intensity", config["null_search"]["PSG_QWP"])
+        self.assertIn("PSG_QWP", config["discovered_zero_offsets_deg"])
+
+        # No calibration_result.json yet -- that's run_reconstruction's job, not run_acquisition's.
+        self.assertFalse((run_dir / "Config" / "calibration_result.json").is_file())
+
+    def test_split_acquisition_then_reconstruction_matches_combined_run_calibration(self):
+        """The refactor's whole point: run_acquisition() + run_reconstruction()
+        run separately must produce the same numbers run_calibration()
+        (still exactly this two-step sequence internally) always has --
+        DryRunOpticalBench has no randomness, so this should match closely,
+        not just approximately."""
+
+        split_run_dir = qc.run_acquisition(("PSG_QWP",), "automated", dry_run=True, no_prompt=True)
+        split_exit_code = qc.run_reconstruction(split_run_dir)
+        self.assertEqual(split_exit_code, 0)
+
+        combined_exit_code = qc.run_calibration(("PSG_QWP",), "automated", dry_run=True, no_prompt=True)
+        self.assertEqual(combined_exit_code, 0)
+
+        run_dirs = sorted(self.output_root.glob("*"))
+        self.assertEqual(len(run_dirs), 2)
+
+        import json
+
+        split_report = json.loads((run_dirs[0] / "Config" / "calibration_result.json").read_text())
+        combined_report = json.loads((run_dirs[1] / "Config" / "calibration_result.json").read_text())
+        split_summary = split_report["results"]["PSG_QWP"]["summary"]
+        combined_summary = combined_report["results"]["PSG_QWP"]["summary"]
+        for key in ("s", "f", "p", "r", "delta_deg", "T"):
+            self.assertAlmostEqual(split_summary[key]["median"], combined_summary[key]["median"], places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

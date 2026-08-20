@@ -8,12 +8,12 @@ All five suites exist and pass, hardware-independent, verified
 | Suite | Location | Tests | Result |
 |---|---|---|---|
 | `test_measure` | `common/` | 35 | OK |
-| `test_qwp_calibration` | `section2_qwp_calibration/` | 25 | OK |
-| `test_discrete_reconstruction` | `section3_discrete_reconstruction/` | 13 | OK |
-| `test_continuous_single_arm` | `section4_single_arm_continuous/` | 16 | OK |
-| `test_continuous_dual_arm` | `section5_dual_arm_continuous/` | 17 | OK |
+| `test_qwp_calibration` | `section2_qwp_calibration/` | 27 | OK |
+| `test_discrete_reconstruction` | `section3_discrete_reconstruction/` | 14 | OK |
+| `test_continuous_single_arm` | `section4_single_arm_continuous/` | 17 | OK |
+| `test_continuous_dual_arm` | `section5_dual_arm_continuous/` | 18 | OK |
 
-**106 tests total, all passing**, no motors/camera/Kinesis/IDS Peak SDK
+**111 tests total, all passing**, no motors/camera/Kinesis/IDS Peak SDK
 required for any of them (two of the new tests below run an actual
 `measure.py --dry-run` session, but with `DATA_ROOT` monkeypatched to a
 temp directory — still no real hardware). `section2_qwp_calibration`'s
@@ -46,7 +46,7 @@ pre-flight rank check (including the exact 90°-spacing aliasing
 regression case), plus one full `--dry-run --no-prompt` session per
 mode/acquisition-type combination.
 
-### `section2_qwp_calibration/test_qwp_calibration.py` (25 tests)
+### `section2_qwp_calibration/test_qwp_calibration.py` (27 tests)
 
 The closed-form Eq. 19-21/Eq. 4 math; the golden-section search against a
 known synthetic minimum; a full dry-run session
@@ -62,9 +62,18 @@ the N=3-aliasing regression case — `design.md` §4). Five tests added
 2026-08-20 (`decisions.md` ADR-012) exercise
 `null_intensity_mismatch_warning()` directly — both branches of its
 two-part (ratio AND absolute margin) threshold, since the full dry-run
-session's two nulls always land close together and never trip it.
+session's two nulls always land close together and never trip it. Two
+more tests added the same day, once `qwp_calibration.py` was split into
+`run_acquisition()`/`run_reconstruction()` (`decisions.md` ADR-013,
+`MMIE_ATOMIC_TARGETS.md` target 2.8): confirms `run_acquisition` writes
+real `Images/*.tiff` + `Config/experiment_config.json` even in
+`--dry-run` (previously dry-run frames only existed in memory), and that
+running acquisition and reconstruction as two separate calls produces the
+same numbers as the combined `run_calibration()` (`DryRunOpticalBench` has
+no randomness, so this checks for close agreement, not just "runs without
+error").
 
-### `section3_discrete_reconstruction/test_discrete_reconstruction.py` (13 tests)
+### `section3_discrete_reconstruction/test_discrete_reconstruction.py` (14 tests)
 
 Synthetic round-trip: known M + known QWP defects → forward vector
 formulas → reconstruction → known M recovered to near machine precision
@@ -73,9 +82,14 @@ both scalar and per-pixel calibration), graceful degradation under noise,
 each mode recovers exactly the sub-block the mode table promises (and
 `NaN`s the rest), more states measurably lower noise, and
 `suggest_angle_grid`'s full-rank/reproducibility guarantees (including the
-`0/45/90/135` aliasing-trap regression case).
+`0/45/90/135` aliasing-trap regression case). One test added 2026-08-20
+(`decisions.md` ADR-013) for `discrete_measurement.py` (Section III's own
+capture main, a thin wrapper around `common/measure.py`): a real
+`--dry-run --no-prompt` invocation confirms `--acquisition discrete` is
+preset and `--mode` still accepts any of 3x3/3x4/4x3/4x4 (`DATA_ROOT`
+monkeypatched to a temp directory).
 
-### `section4_single_arm_continuous/test_continuous_single_arm.py` (16 tests)
+### `section4_single_arm_continuous/test_continuous_single_arm.py` (17 tests)
 
 Synthetic round-trip for both 3×4 and 4×3: known M + known QWP defects →
 synthetic per-frame intensities at real, non-uniform logged angles →
@@ -99,9 +113,14 @@ functions had, found and fixed via `decisions.md` ADR-011) and
 `test_load_and_run_against_real_dry_run_session` (an actual
 `measure.py --dry-run --no-prompt` session, `DATA_ROOT` monkeypatched to a
 temp directory, fed through the new loader — this is what actually
-surfaced those bugs, not the pre-existing synthetic-array tests).
+surfaced those bugs, not the pre-existing synthetic-array tests). One
+more test added 2026-08-20 (`decisions.md` ADR-013) for
+`continuous_single_arm_measurement.py` (Section IV's own capture main):
+confirms `--acquisition continuous` is preset, `--mode` really is
+restricted to 3x4/4x3 (rejects `4x4` with `SystemExit`), and a
+`--mode 4x3` dry-run produces the expected config.
 
-### `section5_dual_arm_continuous/test_continuous_dual_arm.py` (17 tests)
+### `section5_dual_arm_continuous/test_continuous_dual_arm.py` (18 tests)
 
 Synthetic round-trip: known M + known QWP defects → synthetic per-frame
 intensities at a real (phase-offset, 5:1-locked) angle trajectory →
@@ -118,7 +137,10 @@ reach into `common/measure.py`, matching Section IV's own test file.
 Two tests added the same day, mirroring Section IV's additions above:
 `test_accepts_genuine_per_pixel_intensities` and
 `test_load_and_run_against_real_dry_run_session` (`DATA_ROOT`
-monkeypatched to a temp directory).
+monkeypatched to a temp directory). One more test added 2026-08-20
+(`decisions.md` ADR-013) for `continuous_dual_arm_measurement.py`
+(Section V's own capture main): confirms `--mode 4x4 --acquisition continuous`
+is preset fully (no `--mode` flag on this wrapper at all).
 
 ## Running Tests
 

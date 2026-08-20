@@ -111,7 +111,7 @@ a bug — this is deliberate, not accidental.
   backtick line continuations and `\`-style paths.
 - `pip install numpy Pillow pythonnet` plus Thorlabs Kinesis (64-bit) and
   the IDS Peak SDK are needed only for real (non-dry-run) hardware use —
-  none of the 97 tests or any `--dry-run` session need them.
+  none of the 111 tests or any `--dry-run` session need them.
 
 ## When You Hit Something New
 

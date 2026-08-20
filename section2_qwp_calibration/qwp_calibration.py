@@ -529,6 +529,29 @@ def capture_frame(camera: IDSCamera, path: Path, retries: int):
     raise CameraError(f"Capture failed: {last_error}") from last_error
 
 
+def _capture_or_simulate(camera: IDSCamera, path: Path, retries: int, dry_run: bool, dry_run_intensity_fn):
+    """Acquire+save a real frame via capture_frame, or synthesize+save a
+    dry-run one via _dry_run_uniform_frame -- unifies real/dry-run capture
+    into one call so EVERY capture site (bright/dark reference,
+    calibration-angle images) writes a real TIFF to disk either way.
+    Needed so a separate reconstruction script
+    (qwp_calibration_reconstruction.py) can read a dry-run session's
+    images back from a real folder the same way it already would a real
+    session's -- before this, dry-run frames only ever existed in memory,
+    the one hold-out from this project's own convention that dry-run
+    always writes files (matches common/camera_communication.py's own
+    dry-run branch)."""
+
+    if dry_run:
+        from PIL import Image
+
+        array = _dry_run_uniform_frame(dry_run_intensity_fn())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(array).save(path, format="TIFF", compression="raw")
+        return array
+    return capture_frame(camera, path, retries)
+
+
 def make_intensity_reader(
     camera: IDSCamera,
     roi: tuple | None,
@@ -718,46 +741,61 @@ def _measure_calibration_angles(
     dry_run: bool,
     bench: "DryRunOpticalBench | None",
     effective_zero_offsets: dict,
-    dark: "object | None",
-) -> dict:
-    """Step 1-4: capture R(C) at each angle in calibration_angles, with
-    P=A=0 (parallel, using the just-discovered offsets). Either the 3
-    fixed Hauge angles (CALIBRATION_ANGLE_MODE == "three_angle") or N
-    evenly-spaced ones (== "least_squares", see
-    least_squares_calibration_angles). Returns the raw frames dict."""
+) -> None:
+    """Step 1-4's IMAGES only (the solve itself now lives in
+    run_reconstruction, below): capture and save R(C) at each angle in
+    calibration_angles, with P=A=0 (parallel, using the just-discovered
+    offsets). Either the 3 fixed Hauge angles (CALIBRATION_ANGLE_MODE ==
+    "three_angle") or N evenly-spaced ones (== "least_squares", see
+    least_squares_calibration_angles). Saves raw (not dark-subtracted --
+    that now happens when run_reconstruction reloads these images, mirroring
+    how Section III/IV/V's own reconstruction scripts load their own dark
+    reference separately rather than baking subtraction into the saved
+    frame) images to Images/<target>/C_<angle>.tiff via
+    _capture_or_simulate, real hardware or dry-run alike."""
 
-    import numpy as np
-
-    frames = {}
     for angle in calibration_angles:
         motor_deg = optical_to_motor(target, angle, effective_zero_offsets)
         print(f"[{target}] optical {angle:g} deg -> motor {motor_deg:.4f} deg")
-        if dry_run:
-            motors[target].move_cage_rotator_to(motor_deg, timeout_ms=MOVE_TIMEOUT_MS, tolerance_deg=POSITION_TOLERANCE_DEG)
-            intensity = bench.calibration_reading(target)
-            array = _dry_run_uniform_frame(intensity)
-        else:
-            reported = motors[target].move_cage_rotator_to(
-                motor_deg, timeout_ms=MOVE_TIMEOUT_MS, tolerance_deg=POSITION_TOLERANCE_DEG
-            )
+        reported = motors[target].move_cage_rotator_to(
+            motor_deg, timeout_ms=MOVE_TIMEOUT_MS, tolerance_deg=POSITION_TOLERANCE_DEG
+        )
+        if not dry_run:
             time.sleep(MOTOR_SETTLE_S)
             print(f"  Encoder readback: {reported:.4f} deg")
-            array = capture_frame(camera, run_dir / "Images" / target / f"C_{angle:g}.tiff", CAMERA_RETRIES)
-        image = array.astype("float64")
-        if dark is not None:
-            image = image - dark
-        frames[float(angle)] = image
-    return frames
+        path = run_dir / "Images" / target / f"C_{angle:g}.tiff"
+        _capture_or_simulate(
+            camera, path, CAMERA_RETRIES, dry_run,
+            (lambda t=target: bench.calibration_reading(t)) if dry_run else None,
+        )
 
 
-def run_calibration(
+def run_acquisition(
     targets: tuple[str, ...],
     null_mode: str,
     dry_run: bool,
     no_prompt: bool,
     angle_mode: str = CALIBRATION_ANGLE_MODE,
     num_least_squares_angles: int = LEAST_SQUARES_NUM_ANGLES,
-) -> int:
+) -> "Path | None":
+    """Hauge Sec. II's acquisition half only: Step 0 (null A vs fixed P,
+    once, shared) + per-target (physical-swap prompt, compensator null
+    search, dark capture, calibration-angle image capture). No math here
+    at all -- run_reconstruction, below, is what turns this into
+    s/f/r/delta_deg/T. Saves every image to disk, including in --dry-run
+    (via _capture_or_simulate -- previously dry-run frames only existed in
+    memory, the one hold-out from this project's own always-writes-files
+    dry-run convention), plus a new Config/experiment_config.json
+    recording everything run_reconstruction needs that isn't recoverable
+    from the images alone. Returns the run directory, or None if the
+    operator declined the "both compensators removed" confirmation (no
+    run directory is left half-populated in that case -- nothing has been
+    opened yet).
+
+    qwp_calibration_capture.py is this function's own CLI entry point.
+    run_calibration(), below, calls this then run_reconstruction() in
+    sequence for the original one-shot combined flow."""
+
     for target in targets:
         if target not in QWP_ROLES:
             raise ValueError(f"CALIBRATION_TARGETS entries must be one of {tuple(QWP_ROLES)}, got {target!r}.")
@@ -783,7 +821,7 @@ def run_calibration(
         print("\n*** Both PSG_QWP and PSA_QWP must be physically removed from the beam path now (arms collinear). ***")
         if not ask_yes_no("Both QWPs are physically removed/out of the beam?"):
             print("Aborting: null search requires both compensators out of the beam.")
-            return 1
+            return None
 
     devices: dict[str, CageRotatorMotor] = {}
     camera = IDSCamera(
@@ -824,10 +862,10 @@ def run_calibration(
             approx_bright_deg, timeout_ms=MOVE_TIMEOUT_MS, tolerance_deg=POSITION_TOLERANCE_DEG
         )
         time.sleep(MOTOR_SETTLE_S)
-        if dry_run:
-            bright_frame = _dry_run_uniform_frame(bench.crossed_polarizer_intensity())
-        else:
-            bright_frame = capture_frame(camera, run_dir / "Images" / "bright_reference.tiff", CAMERA_RETRIES)
+        bright_frame = _capture_or_simulate(
+            camera, run_dir / "Images" / "bright_reference.tiff", CAMERA_RETRIES, dry_run,
+            (bench.crossed_polarizer_intensity if dry_run else None),
+        )
         roi = ROI
         if roi is None:
             reference = bright_frame.astype("uint8") if bright_frame.max() <= 255 else bright_frame
@@ -848,7 +886,8 @@ def run_calibration(
         )
         discovered["PSA_Analyzer"] = discovered_offset_a
 
-        combined_targets_report: dict = {}
+        captured_targets: list[str] = []
+        null_search_report: dict = {}
 
         for target in targets:
             role = QWP_ROLES[target]
@@ -882,16 +921,7 @@ def run_calibration(
                 f"diff {discovered_offset_c - ZERO_OFFSETS_DEG[target]:+.4f} deg)."
             )
             discovered[target] = discovered_offset_c
-
-            # Sanity check (not a Hauge formula, an engineering addition):
-            # this compensator's own null shouldn't read much brighter than
-            # the bare crossed-P/A null found it against -- see
-            # null_intensity_mismatch_warning's docstring for the physical
-            # reasoning. Folded into `warnings` below (not printed here
-            # directly) so it goes through the same single print/storage
-            # path as the existing s/f/delta_deg sanity checks, rather than
-            # a second, separate warning-reporting mechanism.
-            null_intensity_warning = null_intensity_mismatch_warning(a_null_intensity, c_null_intensity, target)
+            null_search_report[target] = {"pa_null_intensity": a_null_intensity, "compensator_null_intensity": c_null_intensity}
 
             # --- Step 1-4: three-angle measurement, P=A=0 parallel ---
             a_parallel_deg = optical_to_motor("PSA_Analyzer", 0.0, effective_zero_offsets)
@@ -900,123 +930,33 @@ def run_calibration(
             )
             time.sleep(MOTOR_SETTLE_S)
 
-            import numpy as np
-
-            dark = None
             if DARK_SUBTRACT:
                 if not dry_run and not no_prompt:
                     input("Block the beam (or close shutter) for a dark frame, then press Enter: ")
-                if dry_run:
-                    dark_array = _dry_run_uniform_frame(bench.NOISE_FLOOR * 0.2)
-                else:
-                    dark_array = capture_frame(camera, run_dir / "Images" / target / "dark.tiff", CAMERA_RETRIES)
-                dark = dark_array.astype("float64")
+                _capture_or_simulate(
+                    camera, run_dir / "Images" / target / "dark.tiff", CAMERA_RETRIES, dry_run,
+                    (lambda: bench.NOISE_FLOOR * 0.2) if dry_run else None,
+                )
                 if not dry_run and not no_prompt:
                     input("Unblock the beam, then press Enter to continue: ")
 
-            frames = _measure_calibration_angles(
-                target, active_calibration_angles, run_dir, devices, camera, dry_run, bench, effective_zero_offsets, dark
-            )
+            _measure_calibration_angles(target, active_calibration_angles, run_dir, devices, camera, dry_run, bench, effective_zero_offsets)
+            captured_targets.append(target)
 
-            if angle_mode == "three_angle":
-                print(f"Computing per-pixel calibration for {target} (Hauge Eq. 19-21, Eq. 4, minimal 3-point solve) ...")
-                maps = compute_calibration(frames)
-            else:
-                print(
-                    f"Computing per-pixel calibration for {target} "
-                    f"({len(active_calibration_angles)}-angle least-squares fit, Eq. 21 generalized) ..."
-                )
-                maps = fit_calibration_least_squares(frames)
-                diagnostics = maps["diagnostics"]
-                if diagnostics["B2"] is not None:
-                    b2_max = float(np.nanmax(np.abs(diagnostics["B2"])))
-                    b4_max = float(np.nanmax(np.abs(diagnostics["B4"])))
-                    print(f"  Diagnostic (should be ~0 if P/A are at their assumed 0/90 reference): max|B2|={b2_max:.4f}, max|B4|={b4_max:.4f}")
-                else:
-                    print(f"  (B2/B4 alignment diagnostic needs >= 5 angles; got {len(active_calibration_angles)}, skipped.)")
-
-            target_roi = roi
-            if ROI is None:
-                reference = frames[active_calibration_angles[0]]
-                ref8 = reference.astype("uint8") if reference.max() <= 255 else reference
-                try:
-                    target_roi = select_roi(ref8, ROI_WINDOW_SIZE, ROI_STRIDE, ROI_MIN_MEAN)
-                except CameraError:
-                    target_roi = roi  # fall back to the A-vs-P ROI if this frame won't yield its own
-
-            summary = summarize_roi(maps, target_roi, AGGREGATION)
-            warnings = sanity_check_warnings(summary, AGGREGATION)
-            if null_intensity_warning:
-                warnings.append(null_intensity_warning)
-            for warning in warnings:
-                print(f"  SANITY WARNING [{target}]: {warning}")
-
-            results_dir = run_dir / "Results" / target
-            results_dir.mkdir(parents=True, exist_ok=True)
-            for key in ("s", "f", "p", "r", "delta_deg", "T"):
-                np.save(results_dir / f"{key}_map.npy", maps[key])
-            if angle_mode == "least_squares" and maps["diagnostics"]["B2"] is not None:
-                np.save(results_dir / "B2_map.npy", maps["diagnostics"]["B2"])
-                np.save(results_dir / "B4_map.npy", maps["diagnostics"]["B4"])
-
-            from PIL import Image
-
-            delta_map = maps["delta_deg"]
-            valid = np.isfinite(delta_map)
-            if valid.any():
-                lo, hi = float(np.nanmin(delta_map)), float(np.nanmax(delta_map))
-                span = hi - lo if hi > lo else 1.0
-                scaled = np.clip((delta_map - lo) / span * 255.0, 0, 255)
-                scaled = np.nan_to_num(scaled, nan=0.0).astype("uint8")
-                Image.fromarray(scaled).save(results_dir / "delta_deg_map_preview.tiff")
-
-            print(f"\n--- {target} summary ---")
-            for key in ("s", "f", "p", "r", "delta_deg", "T"):
-                val = summary[key][AGGREGATION]
-                std = summary[key]["std"]
-                print(f"  {key:10s} = {val: .5f}  (std {std:.5f})")
-
-            combined_targets_report[target] = {
-                "angle_mode": angle_mode,
-                "calibration_angles_deg": list(active_calibration_angles),
-                "roi": {"x": target_roi[0], "y": target_roi[1], "width": target_roi[2], "height": target_roi[3]},
-                "summary": summary,
-                "n_unphysical_pixels": maps["n_unphysical_pixels"],
-                "null_search": {
-                    "pa_null_intensity": a_null_intensity,
-                    "compensator_null_intensity": c_null_intensity,
-                },
-                "sanity_warnings": warnings,
-                "per_pixel_maps": {
-                    key: str((results_dir / f"{key}_map.npy").relative_to(run_dir)) for key in
-                    ("s", "f", "p", "r", "delta_deg", "T")
-                },
-            }
-            if angle_mode == "least_squares":
-                least_squares_diagnostics = {"num_angles": maps["diagnostics"]["num_angles"]}
-                if maps["diagnostics"]["B2"] is not None:
-                    b2_region = maps["diagnostics"]["B2"][
-                        target_roi[1] : target_roi[1] + target_roi[3], target_roi[0] : target_roi[0] + target_roi[2]
-                    ]
-                    b4_region = maps["diagnostics"]["B4"][
-                        target_roi[1] : target_roi[1] + target_roi[3], target_roi[0] : target_roi[0] + target_roi[2]
-                    ]
-                    least_squares_diagnostics["B2_roi_max_abs"] = float(np.nanmax(np.abs(b2_region)))
-                    least_squares_diagnostics["B4_roi_max_abs"] = float(np.nanmax(np.abs(b4_region)))
-                combined_targets_report[target]["least_squares_diagnostics"] = least_squares_diagnostics
-
-        report = {
-            "targets": list(targets),
-            "timestamp": datetime.now().astimezone().isoformat(),
-            "aggregation": AGGREGATION,
-            "dark_subtracted": DARK_SUBTRACT,
+        experiment_config = {
+            "targets": captured_targets,
+            "angle_mode": angle_mode,
+            "calibration_angles_deg": list(active_calibration_angles),
             "null_search_mode": null_mode,
+            "dry_run": dry_run,
+            "dark_subtracted": DARK_SUBTRACT,
             "assumed_zero_offsets_deg": dict(ZERO_OFFSETS_DEG),
             "discovered_zero_offsets_deg": discovered,
-            "results": combined_targets_report,
+            "null_search": null_search_report,
+            "timestamp": datetime.now().astimezone().isoformat(),
         }
         (run_dir / "Config").mkdir(parents=True, exist_ok=True)
-        (run_dir / "Config" / "calibration_result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        (run_dir / "Config" / "experiment_config.json").write_text(json.dumps(experiment_config, indent=2), encoding="utf-8")
         (run_dir / "Config" / "discovered_zero_offsets.json").write_text(
             json.dumps(
                 {
@@ -1028,10 +968,8 @@ def run_calibration(
             ),
             encoding="utf-8",
         )
-
-        print(f"\nSaved: {run_dir / 'Config' / 'calibration_result.json'}")
-        print(f"Saved: {run_dir / 'Config' / 'discovered_zero_offsets.json'}")
-        return 0
+        print(f"\nAcquisition complete. Saved: {run_dir / 'Config' / 'experiment_config.json'}")
+        return run_dir
 
     finally:
         camera.close()
@@ -1040,6 +978,180 @@ def run_calibration(
             if motor is not None:
                 motor.disconnect()
                 print(f"[{axis}] Disconnected.")
+
+
+def run_reconstruction(run_dir: "Path | str", aggregation: str = AGGREGATION) -> int:
+    """Hauge Sec. II's math half only: reads Config/experiment_config.json
+    + Images/ (written by run_acquisition, above -- real hardware or
+    dry-run alike) and runs the same closed-form (or N-angle least-
+    squares) solve run_calibration always has, per captured target,
+    entirely from a saved folder -- no hardware, no motors, no camera.
+    Writes Config/calibration_result.json + per-pixel .npy maps + the
+    delta_deg preview TIFF, identical shape to before this module was
+    split (MMIE_ATOMIC_TARGETS.md target 2.8).
+
+    qwp_calibration_reconstruction.py is this function's own CLI entry
+    point, taking a run directory the same way discrete_reconstruction.py
+    already does for Section III."""
+
+    import numpy as np
+    from PIL import Image
+
+    run_dir = Path(run_dir)
+    config = json.loads((run_dir / "Config" / "experiment_config.json").read_text(encoding="utf-8"))
+    targets = config["targets"]
+    angle_mode = config["angle_mode"]
+    active_calibration_angles = tuple(config["calibration_angles_deg"])
+    dark_subtracted = config["dark_subtracted"]
+    discovered = config["discovered_zero_offsets_deg"]
+    null_search_report = config["null_search"]
+
+    combined_targets_report: dict = {}
+
+    for target in targets:
+        dark = None
+        if dark_subtracted:
+            dark_path = run_dir / "Images" / target / "dark.tiff"
+            if dark_path.is_file():
+                dark = np.asarray(Image.open(dark_path), dtype="float64")
+
+        frames = {}
+        for angle in active_calibration_angles:
+            image = np.asarray(Image.open(run_dir / "Images" / target / f"C_{angle:g}.tiff"), dtype="float64")
+            if dark is not None:
+                image = image - dark
+            frames[float(angle)] = image
+
+        if angle_mode == "three_angle":
+            print(f"Computing per-pixel calibration for {target} (Hauge Eq. 19-21, Eq. 4, minimal 3-point solve) ...")
+            maps = compute_calibration(frames)
+        else:
+            print(
+                f"Computing per-pixel calibration for {target} "
+                f"({len(active_calibration_angles)}-angle least-squares fit, Eq. 21 generalized) ..."
+            )
+            maps = fit_calibration_least_squares(frames)
+            diagnostics = maps["diagnostics"]
+            if diagnostics["B2"] is not None:
+                b2_max = float(np.nanmax(np.abs(diagnostics["B2"])))
+                b4_max = float(np.nanmax(np.abs(diagnostics["B4"])))
+                print(f"  Diagnostic (should be ~0 if P/A are at their assumed 0/90 reference): max|B2|={b2_max:.4f}, max|B4|={b4_max:.4f}")
+            else:
+                print(f"  (B2/B4 alignment diagnostic needs >= 5 angles; got {len(active_calibration_angles)}, skipped.)")
+
+        target_roi = ROI
+        if target_roi is None:
+            reference = frames[float(active_calibration_angles[0])]
+            ref8 = reference.astype("uint8") if reference.max() <= 255 else reference
+            try:
+                target_roi = select_roi(ref8, ROI_WINDOW_SIZE, ROI_STRIDE, ROI_MIN_MEAN)
+            except CameraError:
+                # Fall back to the A-vs-P ROI (bright_reference.tiff), same
+                # as run_calibration always has, if this frame won't yield
+                # its own flat-enough region.
+                bright = np.asarray(Image.open(run_dir / "Images" / "bright_reference.tiff"))
+                bright8 = bright.astype("uint8") if bright.max() <= 255 else bright
+                target_roi = select_roi(bright8, ROI_WINDOW_SIZE, ROI_STRIDE, ROI_MIN_MEAN)
+
+        summary = summarize_roi(maps, target_roi, aggregation)
+        warnings = sanity_check_warnings(summary, aggregation)
+        # Sanity check (not a Hauge formula, an engineering addition): this
+        # compensator's own null shouldn't read much brighter than the
+        # bare crossed-P/A null it was found against -- see
+        # null_intensity_mismatch_warning's docstring for the physical
+        # reasoning. Folded into `warnings` so it goes through the same
+        # single print/storage path as the s/f/delta_deg checks.
+        null_intensity_warning = null_intensity_mismatch_warning(
+            null_search_report[target]["pa_null_intensity"], null_search_report[target]["compensator_null_intensity"], target,
+        )
+        if null_intensity_warning:
+            warnings.append(null_intensity_warning)
+        for warning in warnings:
+            print(f"  SANITY WARNING [{target}]: {warning}")
+
+        results_dir = run_dir / "Results" / target
+        results_dir.mkdir(parents=True, exist_ok=True)
+        for key in ("s", "f", "p", "r", "delta_deg", "T"):
+            np.save(results_dir / f"{key}_map.npy", maps[key])
+        if angle_mode == "least_squares" and maps["diagnostics"]["B2"] is not None:
+            np.save(results_dir / "B2_map.npy", maps["diagnostics"]["B2"])
+            np.save(results_dir / "B4_map.npy", maps["diagnostics"]["B4"])
+
+        delta_map = maps["delta_deg"]
+        valid = np.isfinite(delta_map)
+        if valid.any():
+            lo, hi = float(np.nanmin(delta_map)), float(np.nanmax(delta_map))
+            span = hi - lo if hi > lo else 1.0
+            scaled = np.clip((delta_map - lo) / span * 255.0, 0, 255)
+            scaled = np.nan_to_num(scaled, nan=0.0).astype("uint8")
+            Image.fromarray(scaled).save(results_dir / "delta_deg_map_preview.tiff")
+
+        print(f"\n--- {target} summary ---")
+        for key in ("s", "f", "p", "r", "delta_deg", "T"):
+            val = summary[key][aggregation]
+            std = summary[key]["std"]
+            print(f"  {key:10s} = {val: .5f}  (std {std:.5f})")
+
+        combined_targets_report[target] = {
+            "angle_mode": angle_mode,
+            "calibration_angles_deg": list(active_calibration_angles),
+            "roi": {"x": target_roi[0], "y": target_roi[1], "width": target_roi[2], "height": target_roi[3]},
+            "summary": summary,
+            "n_unphysical_pixels": maps["n_unphysical_pixels"],
+            "null_search": null_search_report[target],
+            "sanity_warnings": warnings,
+            "per_pixel_maps": {
+                key: str((results_dir / f"{key}_map.npy").relative_to(run_dir)) for key in
+                ("s", "f", "p", "r", "delta_deg", "T")
+            },
+        }
+        if angle_mode == "least_squares":
+            least_squares_diagnostics = {"num_angles": maps["diagnostics"]["num_angles"]}
+            if maps["diagnostics"]["B2"] is not None:
+                b2_region = maps["diagnostics"]["B2"][
+                    target_roi[1] : target_roi[1] + target_roi[3], target_roi[0] : target_roi[0] + target_roi[2]
+                ]
+                b4_region = maps["diagnostics"]["B4"][
+                    target_roi[1] : target_roi[1] + target_roi[3], target_roi[0] : target_roi[0] + target_roi[2]
+                ]
+                least_squares_diagnostics["B2_roi_max_abs"] = float(np.nanmax(np.abs(b2_region)))
+                least_squares_diagnostics["B4_roi_max_abs"] = float(np.nanmax(np.abs(b4_region)))
+            combined_targets_report[target]["least_squares_diagnostics"] = least_squares_diagnostics
+
+    report = {
+        "targets": list(targets),
+        "timestamp": datetime.now().astimezone().isoformat(),
+        "aggregation": aggregation,
+        "dark_subtracted": dark_subtracted,
+        "null_search_mode": config["null_search_mode"],
+        "assumed_zero_offsets_deg": config["assumed_zero_offsets_deg"],
+        "discovered_zero_offsets_deg": discovered,
+        "results": combined_targets_report,
+    }
+    (run_dir / "Config" / "calibration_result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"\nSaved: {run_dir / 'Config' / 'calibration_result.json'}")
+    return 0
+
+
+def run_calibration(
+    targets: tuple[str, ...],
+    null_mode: str,
+    dry_run: bool,
+    no_prompt: bool,
+    angle_mode: str = CALIBRATION_ANGLE_MODE,
+    num_least_squares_angles: int = LEAST_SQUARES_NUM_ANGLES,
+) -> int:
+    """The original one-shot combined flow: acquisition immediately
+    followed by reconstruction, exactly as this function always behaved
+    -- now genuinely round-tripping through Config/experiment_config.json
+    and Images/ on disk between the two phases instead of an in-memory
+    handoff (`qwp_calibration_capture.py`/`qwp_calibration_reconstruction.py`
+    are the same two phases run as two separate scripts/processes)."""
+
+    run_dir = run_acquisition(targets, null_mode, dry_run, no_prompt, angle_mode, num_least_squares_angles)
+    if run_dir is None:
+        return 1
+    return run_reconstruction(run_dir, AGGREGATION)
 
 
 # ============================================================================

@@ -282,5 +282,39 @@ class DualArmCalibrationCLIIntegrationTests(unittest.TestCase):
                     self.assertIn(key, result[target])
 
 
+class ContinuousDualArmMeasurementWrapperTests(unittest.TestCase):
+    """continuous_dual_arm_measurement.py -- Section V's own capture main,
+    a thin wrapper around common/measure.py fixed fully to
+    --mode 4x4 --acquisition continuous (this project's "each section
+    folder visibly contains both its own mains" convention). DATA_ROOT is
+    monkeypatched to a temp directory so this never writes into the real
+    project's Data/ folder."""
+
+    def test_presets_4x4_continuous_acquisition(self):
+        import json
+        import tempfile
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import continuous_dual_arm_measurement as wrapper
+
+        original_data_root = wrapper.measure.DATA_ROOT
+        original_argv = sys.argv
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wrapper.measure.DATA_ROOT = Path(tmp_dir)
+            sys.argv = ["continuous_dual_arm_measurement.py", "--dry-run", "--no-prompt", "--run-label", "wraptest5"]
+            try:
+                exit_code = wrapper.main()
+            finally:
+                sys.argv = original_argv
+                wrapper.measure.DATA_ROOT = original_data_root
+
+            self.assertEqual(exit_code, 0)
+            run_dirs = list(Path(tmp_dir).glob("*_wraptest5_*"))
+            self.assertEqual(len(run_dirs), 1)
+            config = json.loads((run_dirs[0] / "Config" / "experiment_config.json").read_text())
+            self.assertEqual(config["acquisition_type"], "continuous")
+            self.assertEqual(config["mode"], "4x4")
+
+
 if __name__ == "__main__":
     unittest.main()

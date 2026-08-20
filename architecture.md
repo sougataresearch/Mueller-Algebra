@@ -41,12 +41,17 @@
 | `common/motor_communication.py` | Thorlabs K10CR2/M rotation-stage wrapper (connect, home, move, continuous spin, dry-run simulation) | Working, reused as-is (never modified per section) |
 | `common/camera_communication.py` | IDS Peak camera wrapper (open/configure, triggered capture, TIFF save+verify, ROI helpers, dry-run simulation) | Working, reused as-is |
 | `common/measure.py` | Acquisition for all of 3×3/3×4/4×3/4×4, discrete and continuous | Working — 35 tests |
-| `section2_qwp_calibration/qwp_calibration.py` | Null-search + closed-form QWP retardance calibration | Working — 20 tests |
-| `section3_discrete_reconstruction/discrete_reconstruction.py` | Mode-agnostic discrete-mode Mueller matrix solve | Working — 13 tests |
-| `section4_single_arm_continuous/continuous_single_arm_reconstruction.py` | Per-revolution + outer-angle Fourier fit, E/B/F reconstruction (3×4/4×3) | Working — 14 tests (shared suite) |
-| `section4_single_arm_continuous/continuous_single_arm_calibration.py` | Built-in phase-offset + rotating-QWP-defect calibration, cross-checked against Section II | Working (library function only, no CLI — see `MMIE_ATOMIC_TARGETS.md` Category 6) |
-| `section5_dual_arm_continuous/continuous_dual_arm_reconstruction.py` | 25-coefficient Fourier fit + full 16-element inversion (4×4) | Working — 15 tests (shared suite) |
-| `section5_dual_arm_continuous/continuous_dual_arm_calibration.py` | Built-in phase-origin + both-QWP-defect calibration, cross-checked against Section II | Working (library function only, no CLI) |
+| `section2_qwp_calibration/qwp_calibration.py` | Combined null-search + closed-form QWP retardance calibration (capture + solve in one run) | Working — 27 tests |
+| `section2_qwp_calibration/qwp_calibration_capture.py` | Same null-search + capture, acquisition only (`run_acquisition()`) | Working |
+| `section2_qwp_calibration/qwp_calibration_reconstruction.py` | Same closed-form solve, reconstruction only (`run_reconstruction()`), reads a capture folder | Working |
+| `section3_discrete_reconstruction/discrete_measurement.py` | Capture main — thin wrapper preset to `--acquisition discrete` | Working — 14 tests (shared suite) |
+| `section3_discrete_reconstruction/discrete_reconstruction.py` | Mode-agnostic discrete-mode Mueller matrix solve | Working — 14 tests (shared suite) |
+| `section4_single_arm_continuous/continuous_single_arm_measurement.py` | Capture main — thin wrapper preset to `--acquisition continuous`, `--mode` restricted to 3×4/4×3 | Working — 17 tests (shared suite) |
+| `section4_single_arm_continuous/continuous_single_arm_reconstruction.py` | Per-revolution + outer-angle Fourier fit, E/B/F reconstruction (3×4/4×3) | Working — 17 tests (shared suite) |
+| `section4_single_arm_continuous/continuous_single_arm_calibration.py` | Built-in phase-offset + rotating-QWP-defect calibration, cross-checked against Section II, with its own `--compare-to` CLI | Working |
+| `section5_dual_arm_continuous/continuous_dual_arm_measurement.py` | Capture main — thin wrapper fixed fully to `--mode 4x4 --acquisition continuous` | Working — 18 tests (shared suite) |
+| `section5_dual_arm_continuous/continuous_dual_arm_reconstruction.py` | 25-coefficient Fourier fit + full 16-element inversion (4×4) | Working — 18 tests (shared suite) |
+| `section5_dual_arm_continuous/continuous_dual_arm_calibration.py` | Built-in phase-origin + both-QWP-defect calibration, cross-checked against Section II, with its own `--compare-to` CLI | Working |
 
 ## Data Flow
 
@@ -135,18 +140,25 @@ algebra/  (MMIE project root)
 │   ├── test_measure.py
 │   └── README.md
 ├── section2_qwp_calibration/
-│   ├── qwp_calibration.py, test_qwp_calibration.py
+│   ├── qwp_calibration.py                  combined capture+solve
+│   ├── qwp_calibration_capture.py          capture only
+│   ├── qwp_calibration_reconstruction.py   reconstruction only, reads a capture folder
+│   ├── test_qwp_calibration.py
 │   └── README.md
 ├── section3_discrete_reconstruction/
-│   ├── discrete_reconstruction.py, test_discrete_reconstruction.py
+│   ├── discrete_measurement.py             capture main (wraps common/measure.py)
+│   ├── discrete_reconstruction.py          reconstruction main
+│   ├── test_discrete_reconstruction.py
 │   └── README.md
 ├── section4_single_arm_continuous/
-│   ├── continuous_single_arm_reconstruction.py
+│   ├── continuous_single_arm_measurement.py    capture main (wraps common/measure.py)
+│   ├── continuous_single_arm_reconstruction.py reconstruction main
 │   ├── continuous_single_arm_calibration.py
 │   ├── test_continuous_single_arm.py
 │   └── README.md
 └── section5_dual_arm_continuous/
-    ├── continuous_dual_arm_reconstruction.py
+    ├── continuous_dual_arm_measurement.py       capture main (wraps common/measure.py)
+    ├── continuous_dual_arm_reconstruction.py    reconstruction main
     ├── continuous_dual_arm_calibration.py
     ├── test_continuous_dual_arm.py
     └── README.md

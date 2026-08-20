@@ -5,7 +5,8 @@ images of an unknown sample, what is its Mueller matrix?
 
 | File | What it is |
 |---|---|
-| `discrete_reconstruction.py` | Mode-agnostic reconstruction math (Hauge Eq. 8/11/17/18). The only file you run. |
+| `discrete_measurement.py` | **Capture main** — thin wrapper around `../common/measure.py`, presetting `--acquisition discrete` (any of 3x3/3x4/4x3/4x4). |
+| `discrete_reconstruction.py` | **Reconstruction main** — mode-agnostic reconstruction math (Hauge Eq. 8/11/17/18), reads a capture run's folder. |
 | `test_discrete_reconstruction.py` | Synthetic round-trip tests (see Testing, below). |
 
 ## Discrete, not continuous
@@ -88,8 +89,14 @@ ROI-summarized single matrix). Both come with a
 
 ## Running it
 
+`discrete_measurement.py` and `..\common\measure.py --acquisition discrete`
+are the same acquisition, callable either way — the former lives in this
+folder specifically so this section visibly has both of its own mains:
+
 ```powershell
-python ..\common\measure.py --mode 4x4 --acquisition discrete --dry-run --no-prompt --run-label sample1
+python discrete_measurement.py --mode 4x4 --dry-run --no-prompt --run-label sample1
+# equivalent: python ..\common\measure.py --mode 4x4 --acquisition discrete --dry-run --no-prompt --run-label sample1
+
 python discrete_reconstruction.py "..\Data\2026-08-18_sample1_01" `
     --psg-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01" `
     --psa-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01" `

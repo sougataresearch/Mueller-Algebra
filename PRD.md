@@ -48,10 +48,10 @@ working bench-control and analysis pipeline.
 - Every reconstruction/calibration module recovers a known, synthetically-
   generated Mueller matrix to near machine precision in the noiseless
   case, and degrades gracefully (not catastrophically) under added noise
-  — verified 2026-08-20: **106 tests across 5 hardware-independent
-  suites, all passing** (`common` 35, `section2_qwp_calibration` 25,
-  `section3_discrete_reconstruction` 13, `section4_single_arm_continuous`
-  16, `section5_dual_arm_continuous` 17).
+  — verified 2026-08-20: **111 tests across 5 hardware-independent
+  suites, all passing** (`common` 35, `section2_qwp_calibration` 27,
+  `section3_discrete_reconstruction` 14, `section4_single_arm_continuous`
+  17, `section5_dual_arm_continuous` 18).
 - A `--dry-run --no-prompt` pass of both acquisition scripts
   (`common/measure.py`, `section2_qwp_calibration/qwp_calibration.py`)
   completes end to end with no hardware installed, exercising every code

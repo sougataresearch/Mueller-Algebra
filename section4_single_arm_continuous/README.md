@@ -8,8 +8,9 @@ dual-arm method below.
 
 | File | What it is |
 |---|---|
-| `continuous_single_arm_reconstruction.py` | Per-revolution Fourier fit + E/B/F reconstruction (Hauge Eq. 41-50). |
-| `continuous_single_arm_calibration.py` | Built-in phase-offset (C1′) and rotating-QWP-defect calibration (Hauge Sec. IV.C). |
+| `continuous_single_arm_measurement.py` | **Capture main** — thin wrapper around `../common/measure.py`, presetting `--acquisition continuous` and restricting `--mode` to 3x4/4x3. |
+| `continuous_single_arm_reconstruction.py` | **Reconstruction main** — per-revolution Fourier fit + E/B/F reconstruction (Hauge Eq. 41-50). |
+| `continuous_single_arm_calibration.py` | Built-in phase-offset (C1′) and rotating-QWP-defect calibration (Hauge Sec. IV.C), with its own `--compare-to` CLI. |
 | `test_continuous_single_arm.py` | Synthetic round-trip tests (see Testing, below). |
 
 Covers `measure.py`'s **3x4 and 4x3 continuous** modes — the two modes
@@ -101,8 +102,15 @@ II's numbers for the same QWP.
 
 ## Running it
 
+`continuous_single_arm_measurement.py` and
+`..\common\measure.py --acquisition continuous` are the same
+acquisition, callable either way — the former lives in this folder
+specifically so this section visibly has both of its own mains:
+
 ```powershell
-python ..\common\measure.py --mode 4x3 --acquisition continuous --dry-run --no-prompt --run-label sample2
+python continuous_single_arm_measurement.py --mode 4x3 --dry-run --no-prompt --run-label sample2
+# equivalent: python ..\common\measure.py --mode 4x3 --acquisition continuous --dry-run --no-prompt --run-label sample2
+
 python continuous_single_arm_reconstruction.py "..\Data\2026-08-18_sample2_01" `
     --rotating-calibration-dir "..\Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01"
 

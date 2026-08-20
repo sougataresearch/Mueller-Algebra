@@ -56,6 +56,12 @@ This writes
 into every reconstruction command below via `--psg-calibration-dir` /
 `--psa-calibration-dir` / `--rotating-calibration-dir`.
 
+`qwp_calibration.py` is capture-then-reconstruct combined into one run;
+to do them as two separate steps instead (e.g. capture now, reconstruct
+later), use `qwp_calibration_capture.py` +
+`qwp_calibration_reconstruction.py` (same output, see
+`section2_qwp_calibration/README.md`).
+
 Once your setup is validated in dry-run (Steps 1-2 above look sane), drop
 `--dry-run` to calibrate for real. Keep `--no-prompt` off for a real run —
 you want the operator confirmations (illumination on, physical QWP swap,
@@ -71,7 +77,8 @@ calibration output from Step 2.
 ### 3a. Discrete mode (Section III) — static grid, slowest, simplest to reason about
 
 ```powershell
-python common\measure.py --mode 4x4 --acquisition discrete --dry-run --no-prompt --run-label sample1
+python section3_discrete_reconstruction\discrete_measurement.py --mode 4x4 --dry-run --no-prompt --run-label sample1
+# equivalent: python common\measure.py --mode 4x4 --acquisition discrete --dry-run --no-prompt --run-label sample1
 
 python section3_discrete_reconstruction\discrete_reconstruction.py "Data\2026-08-18_sample1_01" `
     --psg-calibration-dir "Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01" `
@@ -81,7 +88,8 @@ python section3_discrete_reconstruction\discrete_reconstruction.py "Data\2026-08
 ### 3b. Single-arm continuous (Section IV) — validation stepping-stone
 
 ```powershell
-python common\measure.py --mode 4x3 --acquisition continuous --dry-run --no-prompt --run-label sample2
+python section4_single_arm_continuous\continuous_single_arm_measurement.py --mode 4x3 --dry-run --no-prompt --run-label sample2
+# equivalent: python common\measure.py --mode 4x3 --acquisition continuous --dry-run --no-prompt --run-label sample2
 
 python section4_single_arm_continuous\continuous_single_arm_reconstruction.py "Data\2026-08-18_sample2_01" `
     --rotating-calibration-dir "Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01"
@@ -101,18 +109,18 @@ python section4_single_arm_continuous\continuous_single_arm_calibration.py "Data
 ### 3c. Dual-arm continuous (Section V) — production path, run this one once everything else checks out
 
 ```powershell
-python common\measure.py --mode 4x4 --acquisition continuous --dry-run --no-prompt --run-label sample3
+python section5_dual_arm_continuous\continuous_dual_arm_measurement.py --dry-run --no-prompt --run-label sample3
+# equivalent: python common\measure.py --mode 4x4 --acquisition continuous --dry-run --no-prompt --run-label sample3
 
 python section5_dual_arm_continuous\continuous_dual_arm_reconstruction.py "Data\2026-08-18_sample3_01" `
     --psg-calibration-dir "Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01" `
     --psa-calibration-dir "Data\QWP_Calibration\2026-08-18_PSG_QWPandPSA_QWP_01"
 ```
 
-Same caveat as 3b: `continuous_dual_arm_calibration.py`'s cross-check
-against Step 2 is a library function only (see
-`test_continuous_dual_arm.py`'s cross-check test for the call shape), not
-a command-line script you can run directly against a `Data\<run>` folder
-yet.
+Same idea as 3b: this section also has a built-in calibration cross-check
+against Step 2, with its own `--compare-to` CLI —
+`continuous_dual_arm_calibration.py`, run against a separate,
+sample-absent 4x4 session (see `section5_dual_arm_continuous/README.md`).
 
 ## Step 4 — read the results
 
@@ -152,7 +160,10 @@ Load `mueller_matrix.npy` with `numpy.load(...)` for the full per-pixel map.
 
 1. Run all 5 test suites.
 2. `qwp_calibration.py --target both` (Section II) — once per bench/wavelength.
-3. `measure.py` (pick a mode) — once per sample.
+   (Or `qwp_calibration_capture.py` + `qwp_calibration_reconstruction.py`
+   as two separate steps.)
+3. `measure.py` (pick a mode) — once per sample. (Or that section's own
+   `*_measurement.py`, which presets the mode/acquisition-type for you.)
 4. The matching `*_reconstruction.py` for that mode, pointed at Step 2's
    calibration folder.
 5. Read `Results\mueller_matrix_summary.json`.
