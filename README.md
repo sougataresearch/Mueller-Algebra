@@ -129,6 +129,28 @@ See `common/README.md` for the full checklist (Kinesis/IDS Peak SDK
 install, `pip install`, motor serials/zero-offsets, and the recommended
 dry-run-first order of operations).
 
+## Documentation
+
+- [`PRD.md`](PRD.md) — problem statement, goals, success criteria, scope
+- [`architecture.md`](architecture.md) — module breakdown, data flow,
+  directory structure
+- [`design.md`](design.md) — algorithm-level design decisions, including
+  the two real bugs found and fixed along the way
+- [`rules.md`](rules.md) — coding standards and AI coding rules
+- [`testing.md`](testing.md) — validation strategy per suite (97 tests,
+  all passing)
+- [`decisions.md`](decisions.md) — this project's own ADR log
+- [`memory.md`](memory.md) — living project-status snapshot for future
+  sessions (**read this first** if you're picking this project back up)
+- [`progress_log.md`](progress_log.md) — dated discussion/action-item log
+- [`troubleshooting.md`](troubleshooting.md) — known gotchas
+- [`CONVENTIONS.md`](CONVENTIONS.md) — Hauge-notation and file/folder
+  conventions
+- [`deployment.md`](deployment.md) — environment setup
+- [`MMIE_ATOMIC_TARGETS.md`](MMIE_ATOMIC_TARGETS.md) — fine-grained
+  target checklist (start here for "what's actually left to build" — most
+  of it is already done)
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
