@@ -175,3 +175,39 @@
   "never trust `lstsq` on an unchecked system size" rule, since the
   failure mode here (a premature scalar cast, not an underdetermined fit)
   is genuinely different.
+
+## ADR-012: Cross-check a compensator's null intensity against the analyzer-vs-polarizer null's
+
+- **Decision**: `search_null_automated`/`search_null_interactive`/
+  `run_one_null_search` now return `(angle, achieved_intensity)` instead
+  of just the angle. `run_calibration` compares each compensator's null
+  intensity against the analyzer-vs-polarizer null's own (found once,
+  shared across both QWPs), via a new `null_intensity_mismatch_warning()`,
+  folded into the same `sanity_warnings` list/print path as the existing
+  `abs(s)`/`abs(f-0.5)`/`delta_deg` checks. Both raw intensities are also
+  saved in `calibration_result.json`'s per-target `null_search` field.
+- **Why**: proposed directly by the project owner, with sound physical
+  reasoning confirmed against the code — crossed P/A alone sets a hard
+  intensity floor (that pair's own extinction ratio, dark counts, stray
+  light); a properly-aligned compensator between them can only add to
+  that floor (extra glass surfaces, its own residual diattenuation), never
+  read darker. A compensator null much brighter than the bare P/A null is
+  therefore a real signal (wrong axis, misalignment, dirty optics, stray
+  light), not just noise — and until this change, nothing checked for it:
+  `search_null_automated` computed the achieved intensity, printed it, and
+  discarded it, never comparing it to anything.
+- **Threshold**: two-part (`SANITY_NULL_INTENSITY_RATIO_MAX = 1.5` AND
+  `SANITY_NULL_INTENSITY_ABS_MARGIN = 5.0` counts, both must trip) rather
+  than a ratio alone, so two readings already sitting near the camera's
+  dark-count floor don't get flagged over noise-level differences that
+  would satisfy a bare ratio check. Not from Hauge — an engineering
+  addition, documented as such in the code (`rules.md` AI Coding Rule 1's
+  spirit: don't attribute a project-added check to the paper).
+- **A related, deliberately NOT-adopted idea**: also validating that the
+  found null generalizes beyond the one flat ROI used to search it (e.g.
+  cross-checking against other regions of the frame). Discussed with the
+  project owner and left out for now — the current single-flat-ROI
+  approach (`camera_communication.select_roi`, chosen specifically to
+  avoid a non-uniform illumination profile biasing the search) was judged
+  sufficient; revisit only if a real session's per-pixel retardance maps
+  show spatial structure that a single global zero-offset can't explain.

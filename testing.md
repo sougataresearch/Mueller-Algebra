@@ -8,12 +8,12 @@ All five suites exist and pass, hardware-independent, verified
 | Suite | Location | Tests | Result |
 |---|---|---|---|
 | `test_measure` | `common/` | 35 | OK |
-| `test_qwp_calibration` | `section2_qwp_calibration/` | 20 | OK |
+| `test_qwp_calibration` | `section2_qwp_calibration/` | 25 | OK |
 | `test_discrete_reconstruction` | `section3_discrete_reconstruction/` | 13 | OK |
 | `test_continuous_single_arm` | `section4_single_arm_continuous/` | 16 | OK |
 | `test_continuous_dual_arm` | `section5_dual_arm_continuous/` | 17 | OK |
 
-**101 tests total, all passing**, no motors/camera/Kinesis/IDS Peak SDK
+**106 tests total, all passing**, no motors/camera/Kinesis/IDS Peak SDK
 required for any of them (two of the new tests below run an actual
 `measure.py --dry-run` session, but with `DATA_ROOT` monkeypatched to a
 temp directory — still no real hardware). `section2_qwp_calibration`'s
@@ -46,7 +46,7 @@ pre-flight rank check (including the exact 90°-spacing aliasing
 regression case), plus one full `--dry-run --no-prompt` session per
 mode/acquisition-type combination.
 
-### `section2_qwp_calibration/test_qwp_calibration.py` (20 tests)
+### `section2_qwp_calibration/test_qwp_calibration.py` (25 tests)
 
 The closed-form Eq. 19-21/Eq. 4 math; the golden-section search against a
 known synthetic minimum; a full dry-run session
@@ -58,7 +58,11 @@ least-squares mode's own synthetic round-trip (known-defect recovery at
 N=3 through many angles, exact agreement with the 3-point closed form at
 N=3, a direct noise-reduction check that more angles lower the recovered-s
 standard deviation, the B2/B4 alignment-diagnostic availability rule, and
-the N=3-aliasing regression case — `design.md` §4).
+the N=3-aliasing regression case — `design.md` §4). Five tests added
+2026-08-20 (`decisions.md` ADR-012) exercise
+`null_intensity_mismatch_warning()` directly — both branches of its
+two-part (ratio AND absolute margin) threshold, since the full dry-run
+session's two nulls always land close together and never trip it.
 
 ### `section3_discrete_reconstruction/test_discrete_reconstruction.py` (13 tests)
 

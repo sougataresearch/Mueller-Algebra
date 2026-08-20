@@ -60,10 +60,16 @@ combination.
 - [x] **2.6** 20 tests (`section2_qwp_calibration/test_qwp_calibration.py`),
   including the full dry-run session against `DryRunOpticalBench`'s
   hidden ground-truth model.
+- [x] **2.7** Cross-check a compensator's achieved null intensity against
+  the analyzer-vs-polarizer null's own (`decisions.md` ADR-012) — a
+  compensator null much brighter than the bare P/A floor flags a real
+  problem (wrong axis, misalignment, dirty optics, stray light), not just
+  noise. Both intensities saved in `calibration_result.json`'s
+  `null_search` field.
 
 ### Exit criteria — met
 
-`python -m unittest test_qwp_calibration -v` passes (20/20, verified
+`python -m unittest test_qwp_calibration -v` passes (25/25, verified
 2026-08-20); `Config/calibration_result.json` is written with both QWPs'
 `s,f,r,delta_deg,T` and discovered zero-offsets.
 

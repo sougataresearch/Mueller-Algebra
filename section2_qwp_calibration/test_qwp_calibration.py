@@ -202,6 +202,42 @@ class GoldenSectionSearchTests(unittest.TestCase):
         self.assertAlmostEqual(result, minimum_at, places=3)
 
 
+class NullIntensityMismatchWarningTests(unittest.TestCase):
+    """null_intensity_mismatch_warning() -- an engineering sanity check,
+    not a Hauge formula (decisions.md ADR-012): a compensator null much
+    brighter than the bare crossed-P/A null flags a real problem, not
+    noise. The full dry-run session never exercises the WARNING-firing
+    path (DryRunOpticalBench's two nulls always land within a few counts
+    of each other), so this is tested directly against both branches."""
+
+    def test_no_warning_when_nulls_are_close(self):
+        warning = qc.null_intensity_mismatch_warning(8.0, 8.2, "PSG_QWP")
+        self.assertIsNone(warning)
+
+    def test_warns_when_ratio_and_margin_both_exceeded(self):
+        warning = qc.null_intensity_mismatch_warning(8.0, 20.0, "PSG_QWP")
+        self.assertIsNotNone(warning)
+        self.assertIn("PSG_QWP", warning)
+
+    def test_no_warning_when_ratio_high_but_absolute_margin_not_crossed(self):
+        # Both nulls sit right at the camera's dark-count floor -- a large
+        # RATIO here is just noise, not a real problem, which is exactly
+        # why the check requires both conditions, not the ratio alone.
+        warning = qc.null_intensity_mismatch_warning(1.0, 3.0, "PSG_QWP")
+        self.assertIsNone(warning)
+
+    def test_no_warning_when_margin_high_but_ratio_not_exceeded(self):
+        # A large absolute gap that still keeps the ratio under 1.5x
+        # (e.g. both nulls already fairly bright) shouldn't fire either --
+        # both conditions must trip, not just one.
+        warning = qc.null_intensity_mismatch_warning(100.0, 110.0, "PSG_QWP")
+        self.assertIsNone(warning)
+
+    def test_handles_zero_reference_intensity_without_crashing(self):
+        warning = qc.null_intensity_mismatch_warning(0.0, 6.0, "PSG_QWP")
+        self.assertIsNotNone(warning)
+
+
 class DryRunOpticalBenchTests(unittest.TestCase):
     """The bench's own physics model (Malus's law for the A-vs-P null,
     Hauge Eq. 8/11 collapsed for the compensator null) -- verifies the

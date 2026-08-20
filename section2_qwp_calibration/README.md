@@ -56,6 +56,23 @@ Two-stage search, run automatically by `search_null_automated()`:
 An interactive fallback (`--null-search-mode interactive`) is available if
 you'd rather nudge the angle by hand and watch the live readout.
 
+### Cross-checking one null against another (engineering addition, not from Hauge)
+
+Crossed P/A alone sets a hard intensity floor — whatever leakage that
+pair's own extinction ratio, camera dark counts, and stray light produce.
+A compensator correctly nulled between them can only add to that floor
+(extra glass surfaces, its own residual diattenuation), never read darker.
+So every compensator's achieved null intensity is compared against the
+analyzer-vs-polarizer null's own intensity
+(`null_intensity_mismatch_warning()`); a compensator null more than
+`SANITY_NULL_INTENSITY_RATIO_MAX` (default 1.5x) brighter — and more than
+`SANITY_NULL_INTENSITY_ABS_MARGIN` (default 5 counts) above it in absolute
+terms — flags a real problem (wrong axis, a partial misalignment, dirty
+optics, or stray light), not just noise. Both null intensities and any
+resulting warning are saved in `calibration_result.json`'s per-target
+`null_search`/`sanity_warnings` fields alongside the existing `s`/`f`/
+`delta_deg` sanity checks.
+
 ### Want lower-noise retardance numbers?
 
 The 3-angle closed form is the *minimal* exact solve — 3 equations, 2

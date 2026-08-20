@@ -11,7 +11,10 @@ not a scaffold, unlike the sibling `ocd_library` project. All of Sections
 II–V are implemented and tested:
 
 - Section II (`qwp_calibration.py`): automated/interactive null-search +
-  3-angle or N-angle least-squares closed-form retardance solve. Working.
+  3-angle or N-angle least-squares closed-form retardance solve. Working,
+  **now with a null-intensity cross-check sanity warning** (a compensator
+  null much brighter than the bare crossed-P/A null flags a real problem —
+  `decisions.md` ADR-012, added 2026-08-20).
 - Section III (`discrete_reconstruction.py`): mode-agnostic discrete
   Mueller-matrix solve, exact-inverse or least-squares. Working.
 - Section IV (`continuous_single_arm_reconstruction.py` +
@@ -23,18 +26,28 @@ II–V are implemented and tested:
   16-element inversion, built-in calibration cross-check. Working, same
   new CLI.
 
-**Verified 2026-08-20**: all 5 test suites re-run, **101/101 tests
-passing** (up from 97 the same day, after adding the calibration CLI +
-its regression/integration tests below), no leftover scratch artifacts.
-See `testing.md` for the per-suite breakdown.
+**Verified 2026-08-20**: all 5 test suites re-run, **106/106 tests
+passing** (up from 97 earlier the same day — 101 after the calibration
+CLI work, 106 after the null-intensity cross-check below), no leftover
+scratch artifacts. See `testing.md` for the per-suite breakdown.
 
 **Full documentation suite added 2026-08-20**: `PRD.md`, `architecture.md`,
 `design.md`, `rules.md`, `testing.md`, `troubleshooting.md`,
 `CONVENTIONS.md`, `deployment.md`, `decisions.md` (ADR-001 through
-ADR-011), this file, `progress_log.md`, and `MMIE_ATOMIC_TARGETS.md` —
+ADR-012), this file, `progress_log.md`, and `MMIE_ATOMIC_TARGETS.md` —
 mirroring the sibling `ocd_library`/`sougata_solver` projects' own
 documentation set and discipline, but reflecting a *mature*, largely-
 finished project rather than a forward-looking scaffold.
+
+**Section II null-intensity cross-check added same day** (`decisions.md`
+ADR-012, `MMIE_ATOMIC_TARGETS.md` target 2.7): a compensator's achieved
+null intensity is now compared against the bare crossed-P/A null's own —
+physically, a properly-aligned compensator can only add to that floor,
+never read darker, so a much-brighter compensator null flags a real
+problem (wrong axis, misalignment, dirty optics, stray light). Two-part
+threshold (`SANITY_NULL_INTENSITY_RATIO_MAX=1.5`,
+`SANITY_NULL_INTENSITY_ABS_MARGIN=5.0`, both must trip) so two readings
+already near the camera's dark floor don't false-positive on noise alone.
 
 **Calibration cross-check CLI built same day** (`MMIE_ATOMIC_TARGETS.md`
 Category 6, now COMPLETE): `continuous_single_arm_calibration.py`/

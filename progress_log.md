@@ -163,3 +163,41 @@ fine-grained checklist) or `memory.md` (the living status snapshot).
   `continuous_dual_arm_calibration.py` gained a working CLI; three real
   per-pixel bugs found and fixed along the way, each with a permanent
   regression test; full documentation cross-references updated to match.
+
+---
+
+## 2026-08-20 (later still) — Section II null-intensity cross-check
+
+### Discussed
+
+- Walked through the project owner's own understanding of Section II's
+  calibration procedure step by step; corrected three points against the
+  actual code: the fine null-search stage is golden-section search (~11-13
+  readings), not a 0.05° step-scan; the search never "matches" a prior
+  null's intensity, it independently minimizes its own reading each time;
+  and the null search reads one flat ROI while the actual retardance solve
+  runs per-pixel on full captured frames.
+- Project owner proposed comparing the two null intensities as a sanity
+  check (agreed, with sound physical reasoning: crossed P/A alone sets a
+  hard floor a properly-aligned compensator can only add to, never read
+  below) and confirmed the current single-ROI approach for the null
+  search itself should stay as-is (no whole-frame validation added).
+- Implemented `null_intensity_mismatch_warning()` (`decisions.md`
+  ADR-012): `search_null_automated`/`search_null_interactive`/
+  `run_one_null_search` now return the achieved intensity alongside the
+  angle; each compensator's null is compared against the analyzer-vs-
+  polarizer null's, folded into the existing `sanity_warnings` path.
+  Two-part threshold (ratio + absolute margin). Verified manually against
+  a dry-run session (both nulls ~8.00-8.002, no false-positive warning)
+  and re-ran the full suite: 20/20 still passing.
+
+### Action items
+
+- [x] Add the null-intensity cross-check sanity warning to Section II.
+- [ ] Real-hardware validation — still the one open item in
+  `MMIE_ATOMIC_TARGETS.md` (Category 7).
+- **Session summary**: `qwp_calibration.py` gained a new engineering
+  sanity check (not a Hauge formula) comparing a compensator's null
+  intensity against the bare crossed-polarizer null's own; documented in
+  `decisions.md` ADR-012, `MMIE_ATOMIC_TARGETS.md` target 2.7, and the
+  section's own README.

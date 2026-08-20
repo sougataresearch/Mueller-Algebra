@@ -145,6 +145,19 @@ SANITY_F_DEVIATION_MAX = 0.15  # |f - 0.5| beyond this suggests a bad null
 SANITY_DELTA_MIN_DEG = 80.0
 SANITY_DELTA_MAX_DEG = 100.0
 
+# Engineering addition, not from Hauge: crossed P/A alone sets a hard
+# intensity floor (that pair's own extinction ratio, dark counts, stray
+# light); a properly-aligned compensator inserted between them can only
+# ADD to that floor (extra glass surfaces, its own residual diattenuation),
+# never read darker. A compensator null much brighter than the bare P/A
+# null is a real signal -- wrong axis, misalignment, dirty optics, or
+# stray light -- not just noise. Two-part threshold (ratio AND absolute
+# margin) so two nulls already sitting near the camera's dark-count floor
+# don't get flagged over noise-level differences that satisfy the ratio
+# alone.
+SANITY_NULL_INTENSITY_RATIO_MAX = 1.5
+SANITY_NULL_INTENSITY_ABS_MARGIN = 5.0
+
 
 # Anchored to the project root (not the cwd) so `Data/` always lands in
 # the same top-level place regardless of which folder you run this from.
@@ -350,6 +363,31 @@ def sanity_check_warnings(summary: dict, aggregation: str) -> list[str]:
     if not (SANITY_DELTA_MIN_DEG <= delta_val <= SANITY_DELTA_MAX_DEG):
         warnings.append(f"delta_deg={delta_val:.4f} is outside [{SANITY_DELTA_MIN_DEG}, {SANITY_DELTA_MAX_DEG}].")
     return warnings
+
+
+def null_intensity_mismatch_warning(pa_null_intensity: float, compensator_null_intensity: float, target: str) -> str | None:
+    """Engineering addition, not a Hauge equation: crossed P/A alone sets
+    a hard intensity floor; a properly-aligned compensator between them
+    can only add to that floor (extra surfaces, its own residual
+    diattenuation), never read darker. A compensator null much brighter
+    than the bare P/A null flags a real problem -- wrong axis, a partial
+    misalignment, dirty optics, or stray light -- the same category of
+    thing SANITY_S_ABS_MAX/SANITY_DELTA_*_DEG already catch for a
+    different failure mode. Two-part threshold (ratio AND absolute
+    margin, both must trip) so two readings already near the camera's
+    dark-count floor don't get flagged over noise alone."""
+
+    excess = compensator_null_intensity - pa_null_intensity
+    ratio = compensator_null_intensity / pa_null_intensity if pa_null_intensity > 0 else math.inf
+    if ratio > SANITY_NULL_INTENSITY_RATIO_MAX and excess > SANITY_NULL_INTENSITY_ABS_MARGIN:
+        return (
+            f"[{target}] compensator null intensity ({compensator_null_intensity:.3f}) is "
+            f"{ratio:.2f}x the P-vs-A null intensity ({pa_null_intensity:.3f}), exceeding "
+            f"{SANITY_NULL_INTENSITY_RATIO_MAX}x by more than {SANITY_NULL_INTENSITY_ABS_MARGIN} "
+            "counts -- suspect a bad compensator null (wrong axis, misalignment, dirty optics, "
+            "or stray light), not just noise."
+        )
+    return None
 
 
 # ============================================================================
@@ -564,12 +602,15 @@ def search_null_automated(
     coarse_step_deg: float = NULL_SEARCH_COARSE_STEP_DEG,
     tolerance_deg: float = NULL_SEARCH_TOLERANCE_DEG,
     settle_s: float = NULL_SEARCH_SETTLE_S,
-) -> float:
+) -> tuple[float, float]:
     """Coarse grid (every coarse_step_deg across a full rotation) to bracket
     the minimum, then golden-section refinement to tolerance_deg. Returns
-    the discovered motor angle (deg, raw/un-offset) of the intensity
-    minimum. `move_to_fn(angle_deg)` moves the axis to a raw motor angle;
-    `intensity_fn()` captures and returns the current ROI-mean intensity."""
+    (discovered motor angle in deg, raw/un-offset; the achieved ROI-mean
+    intensity there) -- the intensity is returned (not just printed) so
+    callers can sanity-check it against another null's own achieved
+    intensity (see SANITY_NULL_INTENSITY_RATIO_MAX). `move_to_fn(angle_deg)`
+    moves the axis to a raw motor angle; `intensity_fn()` captures and
+    returns the current ROI-mean intensity."""
 
     def sample(angle_deg: float) -> float:
         move_to_fn(angle_deg % 360.0)
@@ -596,13 +637,15 @@ def search_null_automated(
     final_angle = (best_angle + refined_offset) % 360.0
     final_intensity = sample(final_angle)
     print(f"  Null found at {final_angle:.4f} deg (intensity {final_intensity:.3f}).")
-    return final_angle
+    return final_angle, final_intensity
 
 
-def search_null_interactive(move_to_fn, read_angle_fn, intensity_fn) -> float:
+def search_null_interactive(move_to_fn, read_angle_fn, intensity_fn) -> tuple[float, float]:
     """Interactive fallback/manual-override: loop of (print current angle +
     ROI intensity, prompt operator for a relative nudge in degrees or
-    'done', move, capture, repeat)."""
+    'done', move, capture, repeat). Returns (angle, intensity) -- the
+    intensity is whatever was already read this same iteration (the one
+    just printed to the operator), not a fresh extra capture."""
 
     print("  Interactive null search. Enter a relative nudge in degrees (e.g. 2.5 or -0.3), or 'done'.")
     while True:
@@ -611,7 +654,7 @@ def search_null_interactive(move_to_fn, read_angle_fn, intensity_fn) -> float:
         print(f"  angle={angle:.4f} deg, ROI intensity={intensity:.3f}")
         answer = input("  Nudge (deg) or 'done': ").strip().lower()
         if answer in ("done", "d", ""):
-            return angle
+            return angle, intensity
         try:
             nudge = float(answer)
         except ValueError:
@@ -625,9 +668,10 @@ def run_one_null_search(
     motor: CageRotatorMotor,
     intensity_fn,
     mode: str,
-) -> float:
-    """Dispatches to automated or interactive search, returns the
-    discovered raw motor angle of the minimum."""
+) -> tuple[float, float]:
+    """Dispatches to automated or interactive search, returns (discovered
+    raw motor angle of the minimum, the achieved ROI-mean intensity
+    there)."""
 
     print(f"[{label}] Searching for intensity null ({mode}) ...")
 
@@ -794,7 +838,7 @@ def run_calibration(
             camera, roi, images_dir, "A_vs_P", dry_run,
             (bench.crossed_polarizer_intensity if dry_run else None), CAMERA_RETRIES, SAVE_NULL_SEARCH_FRAMES,
         )
-        a_null_motor_deg = run_one_null_search("PSA_Analyzer vs P", devices["PSA_Analyzer"], a_reader, null_mode)
+        a_null_motor_deg, a_null_intensity = run_one_null_search("PSA_Analyzer vs P", devices["PSA_Analyzer"], a_reader, null_mode)
         discovered_offset_a = (a_null_motor_deg - 90.0) % 360.0
         effective_zero_offsets["PSA_Analyzer"] = discovered_offset_a
         print(
@@ -829,7 +873,7 @@ def run_calibration(
                 ((lambda t=target: bench.compensator_null_intensity(t)) if dry_run else None),
                 CAMERA_RETRIES, SAVE_NULL_SEARCH_FRAMES,
             )
-            c_null_motor_deg = run_one_null_search(f"{target} vs crossed P/A", devices[target], c_reader, null_mode)
+            c_null_motor_deg, c_null_intensity = run_one_null_search(f"{target} vs crossed P/A", devices[target], c_reader, null_mode)
             discovered_offset_c = c_null_motor_deg % 360.0
             effective_zero_offsets[target] = discovered_offset_c
             print(
@@ -838,6 +882,16 @@ def run_calibration(
                 f"diff {discovered_offset_c - ZERO_OFFSETS_DEG[target]:+.4f} deg)."
             )
             discovered[target] = discovered_offset_c
+
+            # Sanity check (not a Hauge formula, an engineering addition):
+            # this compensator's own null shouldn't read much brighter than
+            # the bare crossed-P/A null found it against -- see
+            # null_intensity_mismatch_warning's docstring for the physical
+            # reasoning. Folded into `warnings` below (not printed here
+            # directly) so it goes through the same single print/storage
+            # path as the existing s/f/delta_deg sanity checks, rather than
+            # a second, separate warning-reporting mechanism.
+            null_intensity_warning = null_intensity_mismatch_warning(a_null_intensity, c_null_intensity, target)
 
             # --- Step 1-4: three-angle measurement, P=A=0 parallel ---
             a_parallel_deg = optical_to_motor("PSA_Analyzer", 0.0, effective_zero_offsets)
@@ -892,6 +946,8 @@ def run_calibration(
 
             summary = summarize_roi(maps, target_roi, AGGREGATION)
             warnings = sanity_check_warnings(summary, AGGREGATION)
+            if null_intensity_warning:
+                warnings.append(null_intensity_warning)
             for warning in warnings:
                 print(f"  SANITY WARNING [{target}]: {warning}")
 
@@ -926,6 +982,10 @@ def run_calibration(
                 "roi": {"x": target_roi[0], "y": target_roi[1], "width": target_roi[2], "height": target_roi[3]},
                 "summary": summary,
                 "n_unphysical_pixels": maps["n_unphysical_pixels"],
+                "null_search": {
+                    "pa_null_intensity": a_null_intensity,
+                    "compensator_null_intensity": c_null_intensity,
+                },
                 "sanity_warnings": warnings,
                 "per_pixel_maps": {
                     key: str((results_dir / f"{key}_map.npy").relative_to(run_dir)) for key in
