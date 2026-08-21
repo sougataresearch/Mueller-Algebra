@@ -164,8 +164,8 @@ Peak SDK required.
 ## Setup checklist for a new machine
 
 1. Install Thorlabs Kinesis (64-bit) and the IDS Peak SDK.
-2. `pip install numpy Pillow pythonnet` (IDS Peak's own Python packages
-   come with its SDK installer).
+2. `pip install -r requirements.txt` (from the project root; IDS Peak's
+   own Python packages come with its SDK installer, not pip).
 3. Edit `MOTOR_SERIALS`, `ZERO_OFFSETS_DEG`, and
    `motor_communication.KINESIS_DIR` (if Kinesis isn't installed at the
    default path) for this bench.

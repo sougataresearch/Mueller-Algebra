@@ -1,0 +1,6 @@
+# Same environment MOTORIZED uses for the K10CR2/M stage + IDS camera.
+# ids_peak / ids_peak_ipl are NOT installed via pip -- they come bundled
+# with the IDS Peak SDK installer (see common/README.md's setup checklist).
+numpy
+Pillow
+pythonnet
