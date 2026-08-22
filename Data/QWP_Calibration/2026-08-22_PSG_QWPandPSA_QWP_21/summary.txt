@@ -1,0 +1,52 @@
+QWP Calibration Result Summary
+================================
+Run directory: Data/QWP_Calibration/2026-08-22_PSG_QWPandPSA_QWP_21
+Timestamp: 2026-08-22T11:35:12.016806+08:00
+Targets: PSG_QWP, PSA_QWP
+Aggregation: median
+Angle mode: three_angle (angles: [0.0, 45.0, 90.0] deg)
+Null-search mode: automated
+Dark-subtracted: True
+
+Camera
+------
+  Model: U3-389xCP-M (S/N 4104435041)
+  Exposure: 0.250 ms
+  Frame rate: 34.920 fps
+  Gain: 1
+  Pixel format: Mono8
+
+Motors
+------
+  Rotation velocity: 10 deg/s
+  Rotation acceleration: 10 deg/s^2
+
+Zero offsets (deg): assumed -> discovered
+------------------------------------------
+  PSG_Polarizer    121.7000  (fixed reference; not searched)
+  PSA_Analyzer      45.0200 ->  221.2653  (diff +176.2453)
+  PSG_QWP           66.4000 ->  335.6194  (diff +269.2194)
+  PSA_QWP          174.0700 ->  352.9024  (diff +178.8324)
+
+--- PSG_QWP summary ---
+  s          =  0.00272  (std 0.00919)
+  f          =  0.52676  (std 0.01006)
+  p          = -0.05352  (std 0.02012)
+  r          =  0.99853  (std 0.00112)
+  delta_deg  =  93.06811  (std 1.15501)
+  T          =  0.99728  (std 0.00918)
+  null search: P/A intensity 0, compensator intensity 0
+  unphysical pixels: 0
+  sanity warnings: none
+
+--- PSA_QWP summary ---
+  s          =  0.00287  (std 0.00925)
+  f          =  0.50997  (std 0.01033)
+  p          = -0.01994  (std 0.02065)
+  r          =  0.99971  (std 0.00051)
+  delta_deg  =  91.14277  (std 1.18376)
+  T          =  0.99714  (std 0.00921)
+  null search: P/A intensity 0, compensator intensity 5e-05
+  unphysical pixels: 0
+  sanity warnings: none
+
