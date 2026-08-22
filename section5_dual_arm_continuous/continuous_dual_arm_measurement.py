@@ -26,7 +26,15 @@ def parse_args() -> argparse.Namespace:
         description="Section V dual-arm continuous-mode (4x4) acquisition (wraps common/measure.py)"
     )
     parser.add_argument("--run-label", default=measure.RUN_LABEL)
-    parser.add_argument("--dry-run", action="store_true", default=measure.DRY_RUN)
+    parser.add_argument(
+        "--dry-run", action="store_true", default=None,
+        help="Simulate every motor/camera call. If neither --dry-run nor --no-dry-run is given, "
+        "you'll be prompted for it interactively (unless --no-prompt is also set).",
+    )
+    parser.add_argument(
+        "--no-dry-run", dest="dry_run", action="store_false",
+        help="Explicitly run against real hardware, skipping the interactive dry-run prompt.",
+    )
     parser.add_argument("--no-prompt", action="store_true", help="Skip confirmation prompts; one sample, then exit.")
     return parser.parse_args()
 

@@ -26,7 +26,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Section III discrete-mode acquisition (wraps common/measure.py)")
     parser.add_argument("--mode", choices=tuple(measure.MODE_DEFINITIONS), default=measure.MODE)
     parser.add_argument("--run-label", default=measure.RUN_LABEL)
-    parser.add_argument("--dry-run", action="store_true", default=measure.DRY_RUN)
+    parser.add_argument(
+        "--dry-run", action="store_true", default=None,
+        help="Simulate every motor/camera call. If neither --dry-run nor --no-dry-run is given, "
+        "you'll be prompted for it interactively (unless --no-prompt is also set).",
+    )
+    parser.add_argument(
+        "--no-dry-run", dest="dry_run", action="store_false",
+        help="Explicitly run against real hardware, skipping the interactive dry-run prompt.",
+    )
     parser.add_argument("--no-prompt", action="store_true", help="Skip confirmation prompts; one sample, then exit.")
     parser.add_argument("--resume", type=Path, default=None, metavar="RUN_DIRECTORY", help="Resume an interrupted discrete run.")
     return parser.parse_args()

@@ -286,6 +286,33 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
     return default if not answer else answer in {"y", "yes"}
 
 
+def ask_positive_float(prompt: str, default: float) -> float:
+    """Prompt for a number > 0; blank input keeps `default`. Re-prompts on
+    anything that doesn't parse as a positive float, so a mistyped value
+    never silently falls back to a default the operator didn't ask for."""
+
+    while True:
+        answer = input(f"{prompt} [default {default}]: ").strip()
+        if not answer:
+            return default
+        try:
+            value = float(answer)
+        except ValueError:
+            print(f"  Not a number: {answer!r}. Try again.")
+            continue
+        if value <= 0:
+            print("  Enter a number greater than zero.")
+            continue
+        return value
+
+
+def ask_text(prompt: str, default: str) -> str:
+    """Prompt for a string; blank input keeps `default`."""
+
+    answer = input(f"{prompt} [default {default}]: ").strip()
+    return answer if answer else default
+
+
 # ============================================================================
 # Pre-flight angle-grid rank check (discrete only)
 #
@@ -472,9 +499,17 @@ class CheckpointManager:
 # ============================================================================
 
 class MotorSet:
-    def __init__(self, axes: tuple[str, ...], dry_run: bool) -> None:
+    def __init__(
+        self,
+        axes: tuple[str, ...],
+        dry_run: bool,
+        velocity_deg_s: float = MOVE_VELOCITY_DEG_S,
+        accel_deg_s2: float = MOVE_ACCELERATION_DEG_S2,
+    ) -> None:
         self.axes = axes
         self.dry_run = dry_run
+        self.velocity_deg_s = velocity_deg_s
+        self.accel_deg_s2 = accel_deg_s2
         self.devices: dict[str, CageRotatorMotor] = {}
 
     def open(self) -> None:
@@ -482,7 +517,7 @@ class MotorSet:
             print(f"[{axis}] Connecting motor {MOTOR_SERIALS[axis]} ...")
             motor = CageRotatorMotor(MOTOR_SERIALS[axis], self.dry_run)
             motor.connect()
-            motor.set_velocity(MOVE_VELOCITY_DEG_S, MOVE_ACCELERATION_DEG_S2)
+            motor.set_velocity(self.velocity_deg_s, self.accel_deg_s2)
             self.devices[axis] = motor
             if HOME_MOTORS:
                 print(f"[{axis}] Homing ...")
@@ -633,6 +668,7 @@ def write_config(
     camera: IDSCamera,
     status: str,
     extra: dict | None = None,
+    motors: "MotorSet | None" = None,
 ) -> None:
     config = {
         "mode": mode,  # exact "3x3"/"3x4"/"4x3"/"4x4" -- control/matrix/*/image_loader.py checks this
@@ -643,15 +679,21 @@ def write_config(
         "fixed_angles": {key: float(value) for key, value in fixed.items()},
         "motor_serials": dict(MOTOR_SERIALS),
         "zero_offsets_deg": dict(ZERO_OFFSETS_DEG),
+        # requested_* reflects whatever was ACTUALLY passed to this camera
+        # instance (operator-prompted or --no-prompt fallback), read off
+        # the camera object itself -- not the module-level constants,
+        # which may differ from what this particular run used.
         "camera": {
             "model": camera.model,
             "serial_number": camera.serial_number,
-            "requested_exposure_us": float(CAMERA_EXPOSURE_US),
-            "requested_frame_rate_fps": float(CAMERA_FRAME_RATE_FPS),
-            "requested_gain": float(CAMERA_GAIN),
-            "pixel_format": CAMERA_PIXEL_FORMAT,
+            "requested_exposure_us": float(camera.exposure_us),
+            "requested_frame_rate_fps": float(camera.frame_rate_fps),
+            "requested_gain": float(camera.gain),
+            "pixel_format": camera.pixel_format,
             "applied": camera.applied,
         },
+        "motor_velocity_deg_s": float(motors.velocity_deg_s) if motors is not None else float(MOVE_VELOCITY_DEG_S),
+        "motor_acceleration_deg_s2": float(motors.accel_deg_s2) if motors is not None else float(MOVE_ACCELERATION_DEG_S2),
         "dry_run": bool(dry_run),
     }
     if extra:
@@ -887,10 +929,18 @@ def run_continuous_acquisition(
 # Session orchestration
 # ============================================================================
 
-def run_fresh_session(mode: str, acquisition_type: str, run_label: str, dry_run: bool, no_prompt: bool) -> int:
+def run_fresh_session(mode: str, acquisition_type: str, run_label: str, dry_run: "bool | None", no_prompt: bool) -> int:
     validate_settings(mode, acquisition_type)
     definition = MODE_DEFINITIONS[mode]
     fixed = fixed_angles_for_mode(mode)
+
+    if dry_run is None:
+        if no_prompt:
+            dry_run = DRY_RUN
+        else:
+            dry_run = ask_yes_no(
+                "Run in DRY-RUN mode (simulated motors/camera, no hardware needed)?", default=True
+            )
 
     print("Environment verification")
     all_ok = True
@@ -901,19 +951,26 @@ def run_fresh_session(mode: str, acquisition_type: str, run_label: str, dry_run:
         print("Required production dependencies are missing; non-dry operation is unsafe.")
         return 2
 
+    # Velocity/acceleration are needed to move anything at all, so they're
+    # asked up front, before motors even connect. Camera settings (exposure,
+    # frame rate, gain, pixel format) are asked later, once PSA_Analyzer is
+    # already parked at this mode's bright reference angle -- so if you want
+    # to sanity-check exposure against a live image (e.g. in IDS Cockpit)
+    # before committing a value, the beam is already in the right state to
+    # do that. The values below (module defaults) are used verbatim,
+    # unmodified by the code, only as the prompts' starting point (and as
+    # the --no-prompt fallback).
+    if no_prompt:
+        move_velocity_deg_s = MOVE_VELOCITY_DEG_S
+        move_acceleration_deg_s2 = MOVE_ACCELERATION_DEG_S2
+    else:
+        move_velocity_deg_s = ask_positive_float("Motor rotation velocity (deg/s)", MOVE_VELOCITY_DEG_S)
+        move_acceleration_deg_s2 = ask_positive_float(
+            "Motor rotation acceleration (deg/s^2)", MOVE_ACCELERATION_DEG_S2
+        )
+
     stop_event = threading.Event()
-    motors = MotorSet(definition["active_axes"], dry_run)
-    camera = IDSCamera(
-        dry_run,
-        CAMERA_EXPOSURE_US,
-        CAMERA_FRAME_RATE_FPS,
-        CAMERA_GAIN,
-        CAMERA_PIXEL_FORMAT,
-        CAMERA_TIMEOUT_MS,
-        CAMERA_RETRIES,
-        CAMERA_MEAN_TOO_DARK,
-        CAMERA_MEAN_TOO_BRIGHT,
-    )
+    motors = MotorSet(definition["active_axes"], dry_run, move_velocity_deg_s, move_acceleration_deg_s2)
 
     def request_stop(_signum, _frame) -> None:
         stop_event.set()
@@ -922,6 +979,46 @@ def run_fresh_session(mode: str, acquisition_type: str, run_label: str, dry_run:
     signal.signal(signal.SIGINT, request_stop)
 
     motors.open()
+
+    # PSA_Analyzer is active in every mode (see capture_camera_references's
+    # own docstring) -- park it at this mode's bright reference angle now,
+    # BEFORE asking for exposure, so there's something representative to
+    # judge exposure/saturation against. Exact optical-zero alignment isn't
+    # needed here (that's this mode's own concern elsewhere); this is only
+    # "close enough to near-maximum throughput."
+    bright_angle = FIXED_PSA_POL_DEG if "PSA_Analyzer" in definition["fixed_angle_keys"] else 0.0
+    motors.move_optical({"PSA_Analyzer": bright_angle})
+
+    if no_prompt:
+        exposure_us = CAMERA_EXPOSURE_US
+        frame_rate_fps = CAMERA_FRAME_RATE_FPS
+        gain = CAMERA_GAIN
+        pixel_format = CAMERA_PIXEL_FORMAT
+    else:
+        if not dry_run:
+            print(
+                "\n*** PSA_Analyzer is now parked at this mode's bright reference angle. If you "
+                "want to check the live image for saturation in the camera's own software (e.g. "
+                "IDS Cockpit) before choosing an exposure, do that now and close it before "
+                "continuing -- only one program can hold the camera at a time. ***"
+            )
+        exposure_ms = ask_positive_float("Camera exposure time (ms)", CAMERA_EXPOSURE_US / 1000.0)
+        exposure_us = exposure_ms * 1000.0
+        frame_rate_fps = ask_positive_float("Camera frame rate (fps)", CAMERA_FRAME_RATE_FPS)
+        gain = ask_positive_float("Camera gain", CAMERA_GAIN)
+        pixel_format = ask_text("Camera pixel format", CAMERA_PIXEL_FORMAT)
+
+    camera = IDSCamera(
+        dry_run,
+        exposure_us,
+        frame_rate_fps,
+        gain,
+        pixel_format,
+        CAMERA_TIMEOUT_MS,
+        CAMERA_RETRIES,
+        CAMERA_MEAN_TOO_DARK,
+        CAMERA_MEAN_TOO_BRIGHT,
+    )
     camera.open()
 
     first_sample = True
@@ -956,7 +1053,7 @@ def run_fresh_session(mode: str, acquisition_type: str, run_label: str, dry_run:
                     extra["outer_angles"] = list(OUTER_ANGLES_DEG) if definition["continuous_outer_axis"] else []
                     extra["rotation_ratio"] = list(ROTATION_RATIO)
 
-                write_config(run_dir, mode, acquisition_type, fixed, dry_run, camera, status, extra)
+                write_config(run_dir, mode, acquisition_type, fixed, dry_run, camera, status, extra, motors)
                 capture_camera_references(mode, run_dir, motors, camera, dry_run, no_prompt)
 
                 if not no_prompt:
@@ -986,7 +1083,7 @@ def run_fresh_session(mode: str, acquisition_type: str, run_label: str, dry_run:
                 if no_prompt or not ask_yes_no("This sample failed. Continue with another sample?", default=False):
                     return 1
             finally:
-                write_config(run_dir, mode, acquisition_type, fixed, dry_run, camera, status, extra)
+                write_config(run_dir, mode, acquisition_type, fixed, dry_run, camera, status, extra, motors)
                 transcript.stop()
 
             first_sample = False
@@ -1021,14 +1118,33 @@ def resume_discrete_session(run_dir: Path) -> int:
     states = build_discrete_states(mode, first_values, second_values, fixed)
     dry_run = bool(config.get("dry_run", False))
 
+    # Restore the exact camera/motor settings the original (interrupted)
+    # run actually used, from its saved config -- not whatever the current
+    # module constants happen to be -- so a resumed run is genuinely a
+    # continuation, not a run at possibly-different settings. Falls back to
+    # the module constants only for configs saved before these fields
+    # existed.
+    camera_config = config.get("camera", {})
+    exposure_us = float(camera_config.get("requested_exposure_us", CAMERA_EXPOSURE_US))
+    frame_rate_fps = float(camera_config.get("requested_frame_rate_fps", CAMERA_FRAME_RATE_FPS))
+    gain = float(camera_config.get("requested_gain", CAMERA_GAIN))
+    pixel_format = camera_config.get("pixel_format", CAMERA_PIXEL_FORMAT)
+    move_velocity_deg_s = float(config.get("motor_velocity_deg_s", MOVE_VELOCITY_DEG_S))
+    move_acceleration_deg_s2 = float(config.get("motor_acceleration_deg_s2", MOVE_ACCELERATION_DEG_S2))
+
     print(f"Resuming saved {mode} discrete experiment: {run_dir}")
+    print(
+        f"Restoring saved settings: exposure={exposure_us / 1000.0:.3f} ms, "
+        f"frame rate={frame_rate_fps:.3f} fps, gain={gain:g}, pixel format={pixel_format}, "
+        f"velocity={move_velocity_deg_s:g} deg/s, acceleration={move_acceleration_deg_s2:g} deg/s^2"
+    )
     if not ask_yes_no("Begin hardware initialization and acquisition?"):
         return 0
 
     stop_event = threading.Event()
-    motors = MotorSet(definition["active_axes"], dry_run)
+    motors = MotorSet(definition["active_axes"], dry_run, move_velocity_deg_s, move_acceleration_deg_s2)
     camera = IDSCamera(
-        dry_run, CAMERA_EXPOSURE_US, CAMERA_FRAME_RATE_FPS, CAMERA_GAIN, CAMERA_PIXEL_FORMAT,
+        dry_run, exposure_us, frame_rate_fps, gain, pixel_format,
         CAMERA_TIMEOUT_MS, CAMERA_RETRIES, CAMERA_MEAN_TOO_DARK, CAMERA_MEAN_TOO_BRIGHT,
     )
 
@@ -1060,7 +1176,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=tuple(MODE_DEFINITIONS), default=MODE)
     parser.add_argument("--acquisition", choices=("discrete", "continuous"), default=ACQUISITION_TYPE)
     parser.add_argument("--run-label", default=RUN_LABEL)
-    parser.add_argument("--dry-run", action="store_true", default=DRY_RUN)
+    parser.add_argument(
+        "--dry-run", action="store_true", default=None,
+        help="Simulate every motor/camera call, no hardware needed. If neither --dry-run nor "
+        "--no-dry-run is given, you'll be prompted for it interactively (unless --no-prompt is "
+        f"also set, in which case it falls back to DRY_RUN={DRY_RUN} from the script).",
+    )
+    parser.add_argument(
+        "--no-dry-run", dest="dry_run", action="store_false",
+        help="Explicitly run against real hardware, skipping the interactive dry-run prompt.",
+    )
     parser.add_argument("--no-prompt", action="store_true", help="Skip confirmation prompts; one sample, then exit.")
     parser.add_argument("--resume", type=Path, default=None, metavar="RUN_DIRECTORY", help="Resume an interrupted discrete run.")
     return parser.parse_args()

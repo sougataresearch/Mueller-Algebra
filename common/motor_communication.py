@@ -68,7 +68,7 @@ def _load_kinesis_api() -> dict:
             DeviceConfiguration,
             DeviceManagerCLI,
         )
-        from Thorlabs.MotionControl.GenericMotorCLI.Settings import (  # type: ignore
+        from Thorlabs.MotionControl.GenericMotorCLI import (  # type: ignore
             MotorDirection,
         )
         from Thorlabs.MotionControl.IntegratedStepperMotorsCLI import (  # type: ignore
@@ -79,7 +79,7 @@ def _load_kinesis_api() -> dict:
     except Exception as exc:
         raise MotorError(
             "Could not load the Kinesis API. Confirm 64-bit Python, "
-            "pythonnet, and Thorlabs Kinesis are all installed."
+            f"pythonnet, and Thorlabs Kinesis are all installed. Original error: {exc!r}"
         ) from exc
 
     _API = {

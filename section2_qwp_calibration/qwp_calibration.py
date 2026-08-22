@@ -732,6 +732,33 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
     return default if not answer else answer in {"y", "yes"}
 
 
+def ask_positive_float(prompt: str, default: float) -> float:
+    """Prompt for a number > 0; blank input keeps `default`. Re-prompts on
+    anything that doesn't parse as a positive float, so a mistyped value
+    never silently falls back to a default the operator didn't ask for."""
+
+    while True:
+        answer = input(f"{prompt} [default {default}]: ").strip()
+        if not answer:
+            return default
+        try:
+            value = float(answer)
+        except ValueError:
+            print(f"  Not a number: {answer!r}. Try again.")
+            continue
+        if value <= 0:
+            print("  Enter a number greater than zero.")
+            continue
+        return value
+
+
+def ask_text(prompt: str, default: str) -> str:
+    """Prompt for a string; blank input keeps `default`."""
+
+    answer = input(f"{prompt} [default {default}]: ").strip()
+    return answer if answer else default
+
+
 def _measure_calibration_angles(
     target: str,
     calibration_angles: tuple[float, ...],
@@ -823,23 +850,45 @@ def run_acquisition(
             print("Aborting: null search requires both compensators out of the beam.")
             return None
 
+    # Velocity/acceleration are needed to move anything at all, so they're
+    # asked up front, before P/A even connect. Camera settings (exposure,
+    # frame rate, gain, pixel format) are asked later, once P and A are
+    # already parked at their approximate parallel/bright reference
+    # position -- so if you want to sanity-check exposure against a live
+    # image (e.g. in IDS Cockpit) before committing a value, the beam is
+    # already in the right state to do that. The values below (module
+    # defaults) are used verbatim, unmodified by the code, only as the
+    # prompts' starting point (and as the --no-prompt fallback).
+    if no_prompt:
+        move_velocity_deg_s = MOVE_VELOCITY_DEG_S
+        move_acceleration_deg_s2 = MOVE_ACCELERATION_DEG_S2
+    else:
+        move_velocity_deg_s = ask_positive_float("Motor rotation velocity (deg/s)", MOVE_VELOCITY_DEG_S)
+        move_acceleration_deg_s2 = ask_positive_float(
+            "Motor rotation acceleration (deg/s^2)", MOVE_ACCELERATION_DEG_S2
+        )
+
     devices: dict[str, CageRotatorMotor] = {}
-    camera = IDSCamera(
-        dry_run, CAMERA_EXPOSURE_US, CAMERA_FRAME_RATE_FPS, CAMERA_GAIN,
-        CAMERA_PIXEL_FORMAT, CAMERA_TIMEOUT_MS, CAMERA_RETRIES,
-    )
+    camera: "IDSCamera | None" = None
+
+    def _connect_and_home(axis: str) -> None:
+        print(f"[{axis}] Connecting motor {MOTOR_SERIALS[axis]} ...")
+        motor = CageRotatorMotor(MOTOR_SERIALS[axis], dry_run)
+        motor.connect()
+        motor.set_velocity(move_velocity_deg_s, move_acceleration_deg_s2)
+        devices[axis] = motor
+        if HOME_MOTORS:
+            print(f"[{axis}] Homing ...")
+            motor.home_with_speed(HOME_SPEED_DEG_S, MOVE_TIMEOUT_MS)
 
     try:
-        for axis in active_axes:
-            print(f"[{axis}] Connecting motor {MOTOR_SERIALS[axis]} ...")
-            motor = CageRotatorMotor(MOTOR_SERIALS[axis], dry_run)
-            motor.connect()
-            motor.set_velocity(MOVE_VELOCITY_DEG_S, MOVE_ACCELERATION_DEG_S2)
-            devices[axis] = motor
-            if HOME_MOTORS:
-                print(f"[{axis}] Homing ...")
-                motor.home_with_speed(HOME_SPEED_DEG_S, MOVE_TIMEOUT_MS)
-        camera.open()
+        # Only P and A are needed for Step 0 (fixed-P vs A null search).
+        # Each compensator's motor is connected+homed just-in-time, per
+        # target below, right after its physical-insertion confirmation --
+        # so a QWP stage that isn't plugged in/powered yet doesn't block
+        # startup or the P/A null search that doesn't need it.
+        for axis in ("PSG_Polarizer", "PSA_Analyzer"):
+            _connect_and_home(axis)
 
         bench = DryRunOpticalBench(devices) if dry_run else None
         effective_zero_offsets = dict(ZERO_OFFSETS_DEG)
@@ -857,11 +906,42 @@ def run_acquisition(
         images_dir = run_dir / "Images" / "NullSearch"
 
         # --- Step 0a: null A vs fixed P (once; shared by both targets) ---
+        # P/A are now at their ASSUMED (not yet discovered) parallel/bright
+        # position -- exact optical-zero alignment isn't needed here, only
+        # "close enough to near-maximum throughput" to judge exposure
+        # against, since that's what the null search below re-discovers.
         approx_bright_deg = optical_to_motor("PSA_Analyzer", 0.0, effective_zero_offsets)
         devices["PSA_Analyzer"].move_cage_rotator_to(
             approx_bright_deg, timeout_ms=MOVE_TIMEOUT_MS, tolerance_deg=POSITION_TOLERANCE_DEG
         )
         time.sleep(MOTOR_SETTLE_S)
+
+        if no_prompt:
+            exposure_us = CAMERA_EXPOSURE_US
+            frame_rate_fps = CAMERA_FRAME_RATE_FPS
+            gain = CAMERA_GAIN
+            pixel_format = CAMERA_PIXEL_FORMAT
+        else:
+            if not dry_run:
+                print(
+                    "\n*** PSG_Polarizer and PSA_Analyzer are now parked at their approximate "
+                    "parallel (brightest) reference position. If you want to check the live "
+                    "image for saturation in the camera's own software (e.g. IDS Cockpit) before "
+                    "choosing an exposure, do that now and close it before continuing -- only one "
+                    "program can hold the camera at a time. ***"
+                )
+            exposure_ms = ask_positive_float("Camera exposure time (ms)", CAMERA_EXPOSURE_US / 1000.0)
+            exposure_us = exposure_ms * 1000.0
+            frame_rate_fps = ask_positive_float("Camera frame rate (fps)", CAMERA_FRAME_RATE_FPS)
+            gain = ask_positive_float("Camera gain", CAMERA_GAIN)
+            pixel_format = ask_text("Camera pixel format", CAMERA_PIXEL_FORMAT)
+
+        camera = IDSCamera(
+            dry_run, exposure_us, frame_rate_fps, gain,
+            pixel_format, CAMERA_TIMEOUT_MS, CAMERA_RETRIES,
+        )
+        camera.open()
+
         bright_frame = _capture_or_simulate(
             camera, run_dir / "Images" / "bright_reference.tiff", CAMERA_RETRIES, dry_run,
             (bench.crossed_polarizer_intensity if dry_run else None),
@@ -894,10 +974,12 @@ def run_acquisition(
             other_qwp = role["other_qwp"]
             print(f"\n=== Calibrating {target} ===")
             if not dry_run and not no_prompt:
-                print(f"\n*** Physically insert {target} into the beam; confirm {other_qwp} is still removed. ***")
-                if not ask_yes_no(f"{target} inserted and {other_qwp} still removed/out of the beam?"):
+                print(f"\n*** Physically insert/connect {target} into the beam; confirm {other_qwp} is still removed. ***")
+                if not ask_yes_no(f"{target} inserted/connected and {other_qwp} still removed/out of the beam?"):
                     print(f"Aborting {target}: cannot calibrate with {other_qwp} still in the beam or {target} missing.")
                     continue
+            if target not in devices:
+                _connect_and_home(target)
 
             # Keep A parked at the just-discovered crossed position while
             # searching for this compensator's null (Hauge: "insert the
@@ -943,6 +1025,17 @@ def run_acquisition(
             _measure_calibration_angles(target, active_calibration_angles, run_dir, devices, camera, dry_run, bench, effective_zero_offsets)
             captured_targets.append(target)
 
+            # Reverse of the just-in-time connect above: home this
+            # compensator back to its reference position and disconnect it
+            # before moving on, so it's not left under power/USB while the
+            # operator physically removes it (or starts on the next QWP).
+            print(f"[{target}] Homing before disconnect ...")
+            devices[target].home_with_speed(HOME_SPEED_DEG_S, MOVE_TIMEOUT_MS)
+            devices.pop(target).disconnect()
+            print(f"[{target}] Disconnected.")
+            if not dry_run and not no_prompt:
+                print(f"*** {target} may now be physically removed/disconnected. ***")
+
         experiment_config = {
             "targets": captured_targets,
             "angle_mode": angle_mode,
@@ -950,6 +1043,14 @@ def run_acquisition(
             "null_search_mode": null_mode,
             "dry_run": dry_run,
             "dark_subtracted": DARK_SUBTRACT,
+            "camera_model": camera.model,
+            "camera_serial_number": camera.serial_number,
+            "camera_exposure_us": exposure_us,
+            "camera_frame_rate_fps": frame_rate_fps,
+            "camera_gain": gain,
+            "camera_pixel_format": pixel_format,
+            "motor_velocity_deg_s": move_velocity_deg_s,
+            "motor_acceleration_deg_s2": move_acceleration_deg_s2,
             "assumed_zero_offsets_deg": dict(ZERO_OFFSETS_DEG),
             "discovered_zero_offsets_deg": discovered,
             "null_search": null_search_report,
@@ -972,10 +1073,16 @@ def run_acquisition(
         return run_dir
 
     finally:
-        camera.close()
+        if camera is not None:
+            camera.close()
+        # Whatever's still connected here is P/A (each QWP already homed
+        # itself back and disconnected right after its own measurement,
+        # above) -- or, on an early failure, whatever never got that far.
         for axis in reversed(active_axes):
             motor = devices.pop(axis, None)
             if motor is not None:
+                print(f"[{axis}] Homing before disconnect ...")
+                motor.home_with_speed(HOME_SPEED_DEG_S, MOVE_TIMEOUT_MS)
                 motor.disconnect()
                 print(f"[{axis}] Disconnected.")
 
@@ -1179,17 +1286,34 @@ def parse_args() -> argparse.Namespace:
         "--num-calibration-angles", type=int, default=LEAST_SQUARES_NUM_ANGLES,
         help="Number of angles for --calibration-angle-mode least_squares (ignored otherwise). Must be >= 3.",
     )
-    parser.add_argument("--dry-run", action="store_true", default=DRY_RUN)
+    parser.add_argument(
+        "--dry-run", action="store_true", default=None,
+        help="Simulate every motor/camera call, no hardware needed. If neither --dry-run nor "
+        "--no-dry-run is given, you'll be prompted for it interactively (unless --no-prompt is "
+        f"also set, in which case it falls back to DRY_RUN={DRY_RUN} from the script).",
+    )
+    parser.add_argument(
+        "--no-dry-run", dest="dry_run", action="store_false",
+        help="Explicitly run against real hardware, skipping the interactive dry-run prompt.",
+    )
     parser.add_argument("--no-prompt", action="store_true", help="Skip confirmation prompts.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    dry_run = args.dry_run
+    if dry_run is None:
+        if args.no_prompt:
+            dry_run = DRY_RUN
+        else:
+            dry_run = ask_yes_no(
+                "Run in DRY-RUN mode (simulated motors/camera, no hardware needed)?", default=True
+            )
     targets = tuple(QWP_ROLES) if args.target == "both" else (args.target,)
     try:
         return run_calibration(
-            targets, args.null_search_mode, args.dry_run, args.no_prompt,
+            targets, args.null_search_mode, dry_run, args.no_prompt,
             args.calibration_angle_mode, args.num_calibration_angles,
         )
     except (MotorError, CameraError, ValueError, RuntimeError) as exc:

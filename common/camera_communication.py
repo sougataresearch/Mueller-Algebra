@@ -91,7 +91,7 @@ class IDSCamera:
             from ids_peak import ids_peak, ids_peak_ipl_extension
             from ids_peak_ipl import ids_peak_ipl
         except Exception as exc:
-            raise CameraError("Could not load the IDS Peak Python packages.") from exc
+            raise CameraError(f"Could not load the IDS Peak Python packages. Original error: {exc!r}") from exc
 
         self.ids_peak = ids_peak
         self.ids_peak_ipl = ids_peak_ipl
@@ -230,6 +230,7 @@ class IDSCamera:
     def close(self) -> None:
         if self.dry_run:
             return
+        was_open = self.device is not None
         try:
             if self.started:
                 try:
@@ -264,7 +265,8 @@ class IDSCamera:
             self.data_stream = None
             self.node_map = None
             self.device = None
-            print("Camera disconnected.")
+            if was_open:
+                print("Camera disconnected.")
 
 
 def select_roi(image, window_size: int, stride: int, min_mean: float) -> tuple[int, int, int, int]:
